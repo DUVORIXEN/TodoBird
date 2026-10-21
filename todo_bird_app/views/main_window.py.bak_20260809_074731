@@ -1,0 +1,108 @@
+import logging
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget
+
+from todo_bird_app.widgets.sidebar import SidebarWidget
+from todo_bird_app.widgets.headerbar import HeaderBarWidget
+from todo_bird_app.widgets.task_dialog import TaskDialog
+from todo_bird_app.controllers.navigation_controller import NavigationController
+from todo_bird_app.controllers.task_controller import TaskController
+from todo_bird_app.views.inbox_view import InboxView
+from todo_bird_app.views.today_view import TodayView
+from todo_bird_app.views.focus_view import FocusView
+from todo_bird_app.views.upcoming_view import UpcomingView
+from todo_bird_app.views.projects_view import ProjectsView
+from todo_bird_app.views.completed_view import CompletedView
+from todo_bird_app.views.daily_review_view import DailyReviewView
+from todo_bird_app.views.gantt_view import GanttView
+from todo_bird_app.views.settings_view import SettingsView
+from todo_bird_app.views.pilot_feedback_view import PilotFeedbackView
+from todo_bird_app.views.calendar_view import CalendarView
+from todo_bird_app.views.analytics_view import AnalyticsView
+
+logger = logging.getLogger(__name__)
+
+class MainWindow(QMainWindow):
+    """
+    Main Application Window for TODO BIRD.
+    Combines Sidebar, HeaderBar, and QStackedWidget view container.
+    """
+    def __init__(self, db_manager, settings_manager, theme_controller):
+        super().__init__()
+        self.db_manager = db_manager
+        self.settings_manager = settings_manager
+        self.theme_controller = theme_controller
+
+        self.setWindowTitle("TODO BIRD — Offline Productivity Companion")
+        self.resize(1200, 800)
+        self.setMinimumSize(900, 600)
+
+        self.view_stack_map = {}
+        self._init_ui()
+
+        # Navigation Controller
+        self.navigation_controller = NavigationController(self)
+        self.sidebar.section_changed.connect(self.navigation_controller.set_active_section)
+
+        # Initial view selection
+        self.navigation_controller.set_active_section("inbox")
+
+    def _init_ui(self):
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+
+        root_layout = QHBoxLayout(central_widget)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        # 1. Sidebar Widget
+        self.sidebar = SidebarWidget(self)
+        root_layout.addWidget(self.sidebar)
+
+        # 2. Main Content Right Panel (HeaderBar + Stacked Views)
+        right_panel = QWidget(self)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        # HeaderBar
+        self.headerbar = HeaderBarWidget(self)
+        self.headerbar.toggle_theme_requested.connect(self.theme_controller.toggle_theme)
+        self.headerbar.quick_add_requested.connect(self.open_quick_add_dialog)
+        right_layout.addWidget(self.headerbar)
+
+        # QStackedWidget Container
+        self.stacked_widget = QStackedWidget(self)
+        right_layout.addWidget(self.stacked_widget, 1)
+
+        root_layout.addWidget(right_panel, 1)
+
+        # Register section views
+        self._setup_views()
+
+    def _setup_views(self):
+        views_config = [
+            ("inbox", InboxView(self.db_manager, self.settings_manager)),
+            ("today", TodayView(self.db_manager, self.settings_manager)),
+            ("focus", FocusView(self.db_manager, self.settings_manager)),
+            ("upcoming", UpcomingView(self.db_manager, self.settings_manager)),
+            ("projects", ProjectsView(self.db_manager, self.settings_manager)),
+            ("completed", CompletedView(self.db_manager, self.settings_manager)),
+            ("calendar", CalendarView(self.db_manager, self.settings_manager)),
+            ("gantt", GanttView(self.db_manager, self.settings_manager)),
+            ("analytics", AnalyticsView(self.db_manager, self.settings_manager)),
+            ("daily_review", DailyReviewView(self.db_manager, self.settings_manager)),
+            ("feedback", PilotFeedbackView(self.db_manager, self.settings_manager)),
+            ("settings", SettingsView(self.db_manager, self.settings_manager)),
+        ]
+
+        for key, view_widget in views_config:
+            idx = self.stacked_widget.addWidget(view_widget)
+            self.view_stack_map[key] = (idx, view_widget)
+
+    def open_quick_add_dialog(self):
+        task_controller = TaskController(self.db_manager)
+        projects = task_controller.get_all_projects()
+        dlg = TaskDialog(projects, parent=self)
+        if dlg.exec() == TaskDialog.Accepted:
+            new_task = dlg.get_task()
+            task_controller.add_task(new_task)

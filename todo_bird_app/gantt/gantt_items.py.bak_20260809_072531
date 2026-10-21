@@ -1,0 +1,129 @@
+from PySide6.QtWidgets import (
+    QGraphicsItemGroup, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsPolygonItem, QGraphicsItem
+)
+from PySide6.QtGui import QBrush, QPen, QColor, QPolygonF
+from PySide6.QtCore import QRectF, QPointF, Qt
+
+from todo_bird_app.models.task import Task, TaskStatus, TaskPriority
+from todo_bird_app.controllers.delay_engine import TimingStatus
+
+class GanttTaskItem(QGraphicsItemGroup):
+    """
+    Graphics item representing a task on the Gantt timeline.
+    Displays dynamic status colors, dual Plan vs Actual bars, and rich tooltips.
+    """
+    def __init__(
+        self,
+        task: Task,
+        row: int,
+        col_start: float,
+        duration_cols: float,
+        col_width: int,
+        color_profile: dict,
+        timing_status: TimingStatus = TimingStatus.COMPLETED_ON_TIME,
+        project_name: str = "Inbox",
+        row_height: int = 40,
+        show_actual_bars: bool = True,
+        parent=None
+    ):
+        super().__init__(parent)
+        self.task = task
+        self.row = row
+        self.col_start = col_start
+        self.duration_cols = max(duration_cols, 0.5)
+        self.col_width = col_width
+        self.color_profile = color_profile
+        self.timing_status = timing_status
+        self.project_name = project_name
+        self.row_height = row_height
+        self.show_actual_bars = show_actual_bars
+
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.setAcceptHoverEvents(True)
+
+        self._render_item()
+        self._set_rich_tooltip()
+
+    def _get_status_color(self) -> str:
+        cp = self.color_profile
+        if self.task.status == TaskStatus.CANCELLED:
+            return cp.get("cancelled_color", "#6B7280")
+        if self.task.status == TaskStatus.INBOX and "paused" in self.task.tags:
+            return cp.get("paused_color", "#8B5CF6")
+
+        status_map = {
+            TimingStatus.COMPLETED_BEFORE_TIME: cp.get("completed_early_color", "#065F46"),
+            TimingStatus.COMPLETED_ON_TIME: cp.get("completed_ontime_color", "#10B981"),
+            TimingStatus.SLIGHT_DELAY: cp.get("slight_delay_color", "#F59E0B"),
+            TimingStatus.MODERATE_DELAY: cp.get("moderate_delay_color", "#F97316"),
+            TimingStatus.SEVERE_DELAY: cp.get("severe_delay_color", "#EF4444"),
+            TimingStatus.VERY_SEVERE_DELAY: cp.get("very_severe_delay_color", "#991B1B"),
+        }
+        return status_map.get(self.timing_status, cp.get("actual_color", "#10B981"))
+
+    def _render_item(self):
+        cp = self.color_profile
+        x = self.col_start * self.col_width
+        y = self.row * self.row_height + 6
+        w = max(self.duration_cols * self.col_width, 24)
+        h = self.row_height - 12
+
+        is_critical = (self.task.priority == TaskPriority.URGENT) or ("critical" in self.task.tags)
+        is_milestone = (self.duration_cols <= 0.5) or ("milestone" in self.task.tags)
+
+        border_pen = QPen(QColor(cp.get("critical_color", "#DC2626")), 2) if is_critical else QPen(Qt.NoPen)
+
+        # 1. Milestone Diamond Rendering
+        if is_milestone:
+            poly = QPolygonF([
+                QPointF(x + w / 2, y),
+                QPointF(x + w, y + h / 2),
+                QPointF(x + w / 2, y + h),
+                QPointF(x, y + h / 2),
+            ])
+            diamond = QGraphicsPolygonItem(poly, self)
+            diamond.setBrush(QBrush(QColor(cp.get("milestone_color", "#E95420"))))
+            diamond.setPen(QPen(QColor("#FFFFFF"), 1))
+        else:
+            # 2. Dual Bar Rendering (Plan vs Actual)
+            half_h = (h - 2) / 2 if self.show_actual_bars else h
+
+            # Top Bar: Planned Timeline
+            planned_bar = QGraphicsRectItem(x, y, w, half_h, self)
+            planned_bar.setBrush(QBrush(QColor(cp.get("planned_color", "#3584E4"))))
+            planned_bar.setPen(border_pen)
+
+            # Bottom Bar: Actual Execution Timeline
+            if self.show_actual_bars:
+                act_color = self._get_status_color()
+                actual_w = w * (self.task.progress / 100.0) if self.task.progress > 0 else (w if self.task.status == TaskStatus.COMPLETED else 0)
+
+                actual_bg = QGraphicsRectItem(x, y + half_h + 2, w, half_h, self)
+                actual_bg.setBrush(QBrush(QColor(255, 255, 255, 20)))
+                actual_bg.setPen(Qt.NoPen)
+
+                if actual_w > 0:
+                    actual_bar = QGraphicsRectItem(x, y + half_h + 2, actual_w, half_h, self)
+                    actual_bar.setBrush(QBrush(QColor(act_color)))
+                    actual_bar.setPen(Qt.NoPen)
+
+        # Title Text Label
+        title_item = QGraphicsSimpleTextItem(f"{self.task.title} ({self.task.progress}%)", self)
+        title_item.setBrush(QBrush(QColor(cp.get("text_color", "#F3F4F6"))))
+        title_item.setPos(x + w + 8, y + 2)
+
+    def _set_rich_tooltip(self):
+        t = self.task
+        tooltip = (
+            f"📌 <b>{t.title}</b><br/>"
+            f"📁 Project: {self.project_name}<br/>"
+            f"🔥 Priority: {t.priority.value}<br/>"
+            f"📅 Planned Date: {t.planned_date or 'N/A'}<br/>"
+            f"⏱️ Planned: {t.planned_start_time or 'N/A'} - {t.planned_end_time or 'N/A'} ({t.estimated_duration}m)<br/>"
+            f"⌛ Actual: {t.actual_start_time or 'N/A'} - {t.actual_end_time or 'N/A'} ({t.actual_duration}m)<br/>"
+            f"⚠️ Delay: {t.delay_minutes}m ({t.delay_percentage:.1f}%)<br/>"
+            f"💡 Reason: {t.delay_reason or 'None'}<br/>"
+            f"📊 Status: {t.status.value} ({t.progress}%)"
+        )
+        self.setToolTip(tooltip)

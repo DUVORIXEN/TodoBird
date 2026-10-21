@@ -1,0 +1,2447 @@
+import logging
+from datetime import date, datetime, timedelta
+from typing import List, Dict, Optional
+
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem, QMenu
+from PySide6.QtCore import Qt, Signal, QRectF, QTimer
+from PySide6.QtGui import QPainter, QBrush, QColor, QPen, QFont, QAction
+
+from todo_bird_app.gantt.gantt_theme import GanttColorProfile, DEFAULT_GANTT_COLORS
+from todo_bird_app.gantt.gantt_items import GanttTaskItem
+from todo_bird_app.gantt.timescale_engine import TimescaleEngine, ZoomLevel, TimelineColumn
+from todo_bird_app.controllers.delay_engine import DelayEngine, TimingStatus
+from todo_bird_app.models.task import Task, TaskStatus
+from todo_bird_app.gantt.gantt_dependency_engine import GanttDependencyEngine
+from PySide6.QtGui import QPainterPath, QPolygonF, QColor, QPen, QBrush
+from PySide6.QtCore import QPointF
+from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsPolygonItem, QGraphicsRectItem
+
+logger = logging.getLogger(__name__)
+
+class GanttChartWidget(QGraphicsView):
+    """
+    High-performance, interactive PySide6 QGraphicsView Gantt timeline canvas.
+    Supports Multi-Year TimescaleEngine, ISO week headers, range-aware filtering,
+    and responsive navigation.
+    """
+    task_action_requested = Signal(str, int)  # (action_type, task_id)
+
+    # Interactive schedule edit payload.
+    # Contains main-task or nested-subtask identity plus updated
+    # planned dates/times/duration.
+    schedule_change_requested = Signal(object)
+
+    def __init__(self, settings_manager=None, parent=None):
+        super().__init__(parent)
+        self.settings_manager = settings_manager
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
+
+        self.zoom_mode = ZoomLevel.DAILY
+        self.anchor_date = date.today()
+        self.header_height = 60.0
+        self.row_height = 42.0
+
+        self.color_profile = GanttColorProfile()
+        self.delay_engine = DelayEngine(settings_manager) if settings_manager else None
+
+        self.tasks: List[Task] = []
+        self.projects_map: Dict[int, str] = {}
+        self.show_actual_bars = True
+        self.show_completed = True
+        self.filter_project_id = None
+        self.filter_priority = None
+
+        self.columns: List[TimelineColumn] = []
+        self.current_time_line_item = None
+
+        # -------------------------------------------------
+        # Interactive Gantt state
+        # -------------------------------------------------
+        self._drag_item = None
+        self._drag_start_scene_x = 0.0
+        self._drag_start_item_x = 0.0
+        self._drag_start_item_y = 0.0
+        self._drag_moved = False
+        self._drag_threshold_px = 9.0
+
+        # -------------------------------------------------
+        # Edge-resize interaction state
+        # -------------------------------------------------
+        self._resize_mode = None
+        self._resize_item = None
+        self._resize_start_scene_x = 0.0
+        self._resize_start_item_x = 0.0
+        self._resize_start_item_y = 0.0
+        self._resize_preview = None
+        self._resize_moved = False
+        self._resize_edge_px = 14.0
+
+        # Render-time item registry used by dependency routing.
+        self._rendered_task_items = {}
+        self._dependency_graphics = []
+
+        # Commercial scheduling behaviour:
+        # Hourly editing snaps to quarter-hours.
+        self.hourly_snap_minutes = 15
+
+        self.bar_style = (
+            str(
+                self.settings_manager.get(
+                    "gantt_bar_style",
+                    "rounded",
+                )
+            )
+            if self.settings_manager
+            else "rounded"
+        )
+
+        self.planned_bar_color = (
+            str(
+                self.settings_manager.get(
+                    "gantt_planned_bar_color",
+                    "#3584E4",
+                )
+            )
+            if self.settings_manager
+            else "#3584E4"
+        )
+
+        self._setup_view_properties()
+
+        # Required for reliable resize-edge cursor feedback.
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(60000)
+        self.timer.timeout.connect(self.rebuild_chart)
+        self.timer.start()
+
+    def _setup_view_properties(self):
+        self.setRenderHint(QPainter.Antialiasing, True)
+        self.setRenderHint(QPainter.TextAntialiasing, True)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+    # ========================================================
+    # INTERACTIVE GANTT EDITING
+    # ========================================================
+    def _event_view_pos(self, event):
+        """Qt5/Qt6 compatible event position helper."""
+        try:
+            return event.position().toPoint()
+        except Exception:
+            return event.pos()
+
+    def _gantt_item_at(self, view_pos):
+        """
+        Return the GanttTaskItem owning whatever graphics child
+        is under the cursor.
+        """
+        graphics_item = self.itemAt(view_pos)
+
+        while graphics_item is not None:
+            if isinstance(graphics_item, GanttTaskItem):
+                return graphics_item
+            graphics_item = graphics_item.parentItem()
+
+        return None
+
+    def _bar_interaction_mode(
+        self,
+        item,
+        scene_pos,
+    ):
+        """
+        Determine whether the pointer is on the actual schedule bar.
+
+        Returns:
+            "left"  -> resize start
+            "right" -> resize finish
+            "move"  -> move whole schedule
+            None    -> title/status/empty area; do NOT reschedule
+
+        This prevents clicks on task labels/status pills from causing
+        accidental schedule movement.
+        """
+        if item is None:
+            return None
+
+        local_x = (
+            float(scene_pos.x())
+            - float(item.scenePos().x())
+        )
+
+        local_y = (
+            float(scene_pos.y())
+            - float(item.scenePos().y())
+        )
+
+        bar_width = float(
+            getattr(
+                item,
+                "bar_pixel_width",
+                max(
+                    36.0,
+                    float(
+                        item.duration_cols
+                        * item.col_width
+                    ),
+                ),
+            )
+        )
+
+        edge_px = float(
+            self._resize_edge_px
+        )
+
+        # The bar itself occupies this row-height region.
+        # Labels/status to the RIGHT of bar_width are excluded.
+        if (
+            local_y < 2.0
+            or local_y
+            > float(self.row_height) - 2.0
+        ):
+            return None
+
+        if (
+            local_x < -edge_px
+            or local_x
+            > bar_width + edge_px
+        ):
+            return None
+
+        if abs(local_x) <= edge_px:
+            return "left"
+
+        if abs(
+            local_x
+            - bar_width
+        ) <= edge_px:
+            return "right"
+
+        if (
+            0.0
+            <= local_x
+            <= bar_width
+        ):
+            return "move"
+
+        return None
+
+    def mouseMoveEvent_hover_cursor(
+        self,
+        event,
+    ):
+        """
+        Compatibility helper retained for static inspection.
+        Real hover routing is performed inside mouseMoveEvent.
+        """
+        pass
+
+    def _schedule_editable(self, item):
+        if item is None:
+            return False
+
+        task = item.task
+
+        # Historical/closed execution should not be accidentally
+        # rescheduled by a mouse slip.
+        if task.status in (
+            TaskStatus.COMPLETED,
+            TaskStatus.CANCELLED,
+        ):
+            return False
+
+        # Interactive scheduling is supported where movement maps
+        # cleanly to calendar units.
+        return self.zoom_mode in (
+            ZoomLevel.HOURLY,
+            ZoomLevel.DAILY,
+            ZoomLevel.WEEKLY,
+            ZoomLevel.MONTHLY,
+        )
+
+    def _clear_resize_preview(self):
+        if self._resize_preview is not None:
+            try:
+                if (
+                    self._resize_preview.scene()
+                    is not None
+                ):
+                    self.scene.removeItem(
+                        self._resize_preview
+                    )
+            except Exception:
+                pass
+
+        self._resize_preview = None
+
+    def _reset_drag_state(self):
+        self._clear_resize_preview()
+
+        self._drag_item = None
+        self._drag_start_scene_x = 0.0
+        self._drag_start_item_x = 0.0
+        self._drag_start_item_y = 0.0
+        self._drag_moved = False
+
+        self._resize_mode = None
+        self._resize_item = None
+        self._resize_start_scene_x = 0.0
+        self._resize_start_item_x = 0.0
+        self._resize_start_item_y = 0.0
+        self._resize_moved = False
+
+        try:
+            self.viewport().setCursor(
+                Qt.CursorShape.ArrowCursor
+            )
+        except Exception:
+            pass
+
+    def _parse_date(self, value, fallback=None):
+        if value:
+            try:
+                return datetime.strptime(
+                    str(value),
+                    "%Y-%m-%d",
+                ).date()
+            except Exception:
+                pass
+
+        return fallback or date.today()
+
+    def _parse_minutes(self, value, default=8 * 60):
+        if value and ":" in str(value):
+            try:
+                hh, mm = map(
+                    int,
+                    str(value).split(":")[:2],
+                )
+                return max(
+                    0,
+                    min(
+                        hh * 60 + mm,
+                        1439,
+                    ),
+                )
+            except Exception:
+                pass
+
+        return default
+
+    @staticmethod
+    def _shift_months(value, month_delta):
+        """
+        Calendar-safe month shifting preserving day where possible.
+        Example: 31 Jan + 1 month -> 28/29 Feb.
+        """
+        import calendar
+
+        month_index = (
+            value.year * 12
+            + (value.month - 1)
+            + int(month_delta)
+        )
+
+        year = month_index // 12
+        month = month_index % 12 + 1
+
+        day = min(
+            value.day,
+            calendar.monthrange(
+                year,
+                month,
+            )[1],
+        )
+
+        return date(
+            year,
+            month,
+            day,
+        )
+
+    @staticmethod
+    def _minutes_text(total_minutes):
+        total_minutes = max(
+            0,
+            min(int(total_minutes), 1439),
+        )
+        hh = total_minutes // 60
+        mm = total_minutes % 60
+        return f"{hh:02d}:{mm:02d}"
+
+    def _build_schedule_payload(
+        self,
+        item,
+        delta_x,
+    ):
+        """
+        Convert horizontal mouse movement into scheduling data.
+
+        HOURLY:
+          pixel movement -> 15 minute snapped time shift.
+
+        DAILY:
+          pixel movement -> whole-day date shift preserving span.
+
+        WEEKLY:
+          one timeline column -> one calendar week.
+
+        MONTHLY:
+          one timeline column -> one calendar month using
+          calendar-safe month arithmetic.
+        """
+        task = item.task
+
+        item_type = getattr(
+            task,
+            "gantt_item_type",
+            "task",
+        )
+
+        payload = {
+            "item_type": item_type,
+            "task_id": int(task.id),
+            "source_subtask_id": getattr(
+                task,
+                "source_subtask_id",
+                None,
+            ),
+            "parent_task_id": getattr(
+                task,
+                "parent_task_id",
+                None,
+            ),
+            "zoom_mode": self.zoom_mode.value,
+            "title": task.title,
+        }
+
+        if not self.columns:
+            return None
+
+        col_width = float(
+            self.columns[0].width
+        )
+
+        if col_width <= 0:
+            return None
+
+        # --------------------------------------------------
+        # HOURLY — snap to 15-minute increments
+        # --------------------------------------------------
+        if self.zoom_mode == ZoomLevel.HOURLY:
+            raw_minutes = (
+                float(delta_x)
+                / col_width
+                * 60.0
+            )
+
+            snap = max(
+                1,
+                int(self.hourly_snap_minutes),
+            )
+
+            minute_delta = int(
+                round(
+                    raw_minutes / snap
+                )
+                * snap
+            )
+
+            if minute_delta == 0:
+                return None
+
+            start_minutes = self._parse_minutes(
+                task.planned_start_time,
+                8 * 60,
+            )
+
+            duration = int(
+                task.estimated_duration
+                or 30
+            )
+
+            # Keep Hourly-mode edits within the visible 24h day.
+            # Cross-midnight scheduling remains supported by the
+            # normal Task Dialog, but direct Gantt dragging remains
+            # deterministic.
+            duration = max(
+                snap,
+                min(duration, 1439),
+            )
+
+            latest_start = max(
+                0,
+                1440 - duration,
+            )
+
+            new_start = max(
+                0,
+                min(
+                    start_minutes + minute_delta,
+                    latest_start,
+                ),
+            )
+
+            actual_delta = (
+                new_start - start_minutes
+            )
+
+            if actual_delta == 0:
+                return None
+
+            new_end = min(
+                new_start + duration,
+                1439,
+            )
+
+            planned_date = self._parse_date(
+                task.planned_date,
+                self.anchor_date,
+            )
+
+            payload.update(
+                {
+                    "planned_date":
+                        planned_date.strftime(
+                            "%Y-%m-%d"
+                        ),
+                    "due_date":
+                        task.due_date,
+                    "planned_start_time":
+                        self._minutes_text(
+                            new_start
+                        ),
+                    "planned_end_time":
+                        self._minutes_text(
+                            new_end
+                        ),
+                    "estimated_duration":
+                        duration,
+                    "delta_minutes":
+                        actual_delta,
+                    "delta_days": 0,
+                }
+            )
+
+            return payload
+
+        # --------------------------------------------------
+        # DAILY — whole-day movement preserving Due span
+        # --------------------------------------------------
+        if self.zoom_mode == ZoomLevel.DAILY:
+            day_delta = int(
+                round(
+                    float(delta_x)
+                    / col_width
+                )
+            )
+
+            if day_delta == 0:
+                return None
+
+            old_start = self._parse_date(
+                task.planned_date
+            )
+
+            old_due = self._parse_date(
+                task.due_date,
+                old_start,
+            )
+
+            # Prevent corrupt historical inversions.
+            if old_due < old_start:
+                old_due = old_start
+
+            new_start = (
+                old_start
+                + timedelta(
+                    days=day_delta
+                )
+            )
+
+            new_due = (
+                old_due
+                + timedelta(
+                    days=day_delta
+                )
+            )
+
+            payload.update(
+                {
+                    "planned_date":
+                        new_start.strftime(
+                            "%Y-%m-%d"
+                        ),
+                    "due_date":
+                        new_due.strftime(
+                            "%Y-%m-%d"
+                        ),
+                    "planned_start_time":
+                        task.planned_start_time,
+                    "planned_end_time":
+                        task.planned_end_time,
+                    "estimated_duration":
+                        int(
+                            task.estimated_duration
+                            or 0
+                        ),
+                    "delta_minutes": 0,
+                    "delta_days":
+                        day_delta,
+                }
+            )
+
+            return payload
+
+        # --------------------------------------------------
+        # WEEKLY — exact whole-week movement
+        # --------------------------------------------------
+        if self.zoom_mode == ZoomLevel.WEEKLY:
+            period_delta = int(
+                round(
+                    float(delta_x)
+                    / col_width
+                )
+            )
+
+            if period_delta == 0:
+                return None
+
+            day_delta = period_delta * 7
+
+            old_start = self._parse_date(
+                task.planned_date
+            )
+
+            old_due = self._parse_date(
+                task.due_date,
+                old_start,
+            )
+
+            if old_due < old_start:
+                old_due = old_start
+
+            new_start = (
+                old_start
+                + timedelta(days=day_delta)
+            )
+
+            new_due = (
+                old_due
+                + timedelta(days=day_delta)
+            )
+
+            payload.update(
+                {
+                    "planned_date":
+                        new_start.strftime(
+                            "%Y-%m-%d"
+                        ),
+                    "due_date":
+                        new_due.strftime(
+                            "%Y-%m-%d"
+                        ),
+                    "planned_start_time":
+                        task.planned_start_time,
+                    "planned_end_time":
+                        task.planned_end_time,
+                    "estimated_duration":
+                        int(
+                            task.estimated_duration
+                            or 0
+                        ),
+                    "delta_minutes": 0,
+                    "delta_days":
+                        day_delta,
+                    "delta_weeks":
+                        period_delta,
+                    "delta_months": 0,
+                }
+            )
+
+            return payload
+
+        # --------------------------------------------------
+        # MONTHLY — calendar-safe month movement
+        # --------------------------------------------------
+        if self.zoom_mode == ZoomLevel.MONTHLY:
+            month_delta = int(
+                round(
+                    float(delta_x)
+                    / col_width
+                )
+            )
+
+            if month_delta == 0:
+                return None
+
+            old_start = self._parse_date(
+                task.planned_date
+            )
+
+            old_due = self._parse_date(
+                task.due_date,
+                old_start,
+            )
+
+            if old_due < old_start:
+                old_due = old_start
+
+            new_start = self._shift_months(
+                old_start,
+                month_delta,
+            )
+
+            new_due = self._shift_months(
+                old_due,
+                month_delta,
+            )
+
+            payload.update(
+                {
+                    "planned_date":
+                        new_start.strftime(
+                            "%Y-%m-%d"
+                        ),
+                    "due_date":
+                        new_due.strftime(
+                            "%Y-%m-%d"
+                        ),
+                    "planned_start_time":
+                        task.planned_start_time,
+                    "planned_end_time":
+                        task.planned_end_time,
+                    "estimated_duration":
+                        int(
+                            task.estimated_duration
+                            or 0
+                        ),
+                    "delta_minutes": 0,
+                    "delta_days": 0,
+                    "delta_weeks": 0,
+                    "delta_months":
+                        month_delta,
+                }
+            )
+
+            return payload
+
+        return None
+
+    def _build_resize_payload(
+        self,
+        item,
+        edge,
+        delta_x,
+    ):
+        """
+        Convert an edge drag into persisted scheduling data.
+
+        left:
+            changes planned start while finish remains authoritative.
+
+        right:
+            changes planned finish while start remains authoritative.
+
+        Hourly  -> 15-minute snap
+        Daily   -> 1-day snap
+        Weekly  -> 7-day snap
+        Monthly -> calendar-month snap
+        """
+        if (
+            not self.columns
+            or edge
+            not in ("left", "right")
+        ):
+            return None
+
+        task = item.task
+
+        col_width = float(
+            self.columns[0].width
+        )
+
+        if col_width <= 0:
+            return None
+
+        item_type = getattr(
+            task,
+            "gantt_item_type",
+            "task",
+        )
+
+        payload = {
+            "item_type": item_type,
+            "task_id": int(task.id),
+            "source_subtask_id": getattr(
+                task,
+                "source_subtask_id",
+                None,
+            ),
+            "parent_task_id": getattr(
+                task,
+                "parent_task_id",
+                None,
+            ),
+            "zoom_mode": self.zoom_mode.value,
+            "title": task.title,
+            "edit_kind": "resize",
+            "resize_edge": edge,
+        }
+
+        planned_day = self._parse_date(
+            task.planned_date
+        )
+
+        due_day = self._parse_date(
+            task.due_date,
+            fallback=planned_day,
+        )
+
+        start_minutes = self._parse_minutes(
+            task.planned_start_time,
+            default=8 * 60,
+        )
+
+        end_minutes = self._parse_minutes(
+            task.planned_end_time,
+            default=(
+                start_minutes
+                + max(
+                    15,
+                    int(
+                        task.estimated_duration
+                        or 60
+                    ),
+                )
+            ),
+        )
+
+        # -------------------------------------------------
+        # HOURLY
+        # -------------------------------------------------
+        if self.zoom_mode == ZoomLevel.HOURLY:
+            raw_minutes = (
+                float(delta_x)
+                / col_width
+                * 60.0
+            )
+
+            snapped = int(
+                round(
+                    raw_minutes
+                    / self.hourly_snap_minutes
+                )
+                * self.hourly_snap_minutes
+            )
+
+            if edge == "left":
+                new_start = max(
+                    0,
+                    min(
+                        start_minutes
+                        + snapped,
+                        end_minutes
+                        - self.hourly_snap_minutes,
+                    ),
+                )
+
+                new_end = end_minutes
+
+            else:
+                new_start = start_minutes
+
+                new_end = max(
+                    start_minutes
+                    + self.hourly_snap_minutes,
+                    min(
+                        end_minutes
+                        + snapped,
+                        1439,
+                    ),
+                )
+
+            duration = max(
+                self.hourly_snap_minutes,
+                new_end - new_start,
+            )
+
+            payload.update(
+                {
+                    "planned_date":
+                        planned_day.strftime(
+                            "%Y-%m-%d"
+                        ),
+
+                    "due_date":
+                        planned_day.strftime(
+                            "%Y-%m-%d"
+                        ),
+
+                    "planned_start_time":
+                        self._minutes_text(
+                            new_start
+                        ),
+
+                    "planned_end_time":
+                        self._minutes_text(
+                            new_end
+                        ),
+
+                    "estimated_duration":
+                        duration,
+
+                    "delta_minutes":
+                        snapped,
+
+                    "delta_days":
+                        0,
+
+                    "delta_weeks":
+                        0,
+
+                    "delta_months":
+                        0,
+                }
+            )
+
+            return payload
+
+        # -------------------------------------------------
+        # DAILY / WEEKLY
+        # -------------------------------------------------
+        if self.zoom_mode in (
+            ZoomLevel.DAILY,
+            ZoomLevel.WEEKLY,
+        ):
+            columns_delta = int(
+                round(
+                    float(delta_x)
+                    / col_width
+                )
+            )
+
+            step_days = (
+                7
+                if self.zoom_mode
+                == ZoomLevel.WEEKLY
+                else 1
+            )
+
+            day_delta = (
+                columns_delta
+                * step_days
+            )
+
+            if edge == "left":
+                new_start_day = (
+                    planned_day
+                    + timedelta(
+                        days=day_delta
+                    )
+                )
+
+                # minimum one-day schedule
+                if new_start_day > due_day:
+                    new_start_day = due_day
+
+                new_due_day = due_day
+
+            else:
+                new_start_day = planned_day
+
+                new_due_day = (
+                    due_day
+                    + timedelta(
+                        days=day_delta
+                    )
+                )
+
+                if new_due_day < planned_day:
+                    new_due_day = planned_day
+
+            duration_days = (
+                new_due_day
+                - new_start_day
+            ).days + 1
+
+            payload.update(
+                {
+                    "planned_date":
+                        new_start_day.strftime(
+                            "%Y-%m-%d"
+                        ),
+
+                    "due_date":
+                        new_due_day.strftime(
+                            "%Y-%m-%d"
+                        ),
+
+                    "planned_start_time":
+                        task.planned_start_time,
+
+                    "planned_end_time":
+                        task.planned_end_time,
+
+                    # Preserve effort minutes for date-span tasks.
+                    "estimated_duration":
+                        int(
+                            task.estimated_duration
+                            or max(
+                                1,
+                                duration_days
+                            )
+                            * 480
+                        ),
+
+                    "delta_minutes":
+                        0,
+
+                    "delta_days":
+                        day_delta,
+
+                    "delta_weeks":
+                        (
+                            columns_delta
+                            if self.zoom_mode
+                            == ZoomLevel.WEEKLY
+                            else 0
+                        ),
+
+                    "delta_months":
+                        0,
+                }
+            )
+
+            return payload
+
+        # -------------------------------------------------
+        # MONTHLY
+        # -------------------------------------------------
+        if self.zoom_mode == ZoomLevel.MONTHLY:
+            month_delta = int(
+                round(
+                    float(delta_x)
+                    / col_width
+                )
+            )
+
+            if edge == "left":
+                new_start_day = (
+                    self._shift_months(
+                        planned_day,
+                        month_delta,
+                    )
+                )
+
+                if new_start_day > due_day:
+                    new_start_day = due_day
+
+                new_due_day = due_day
+
+            else:
+                new_start_day = planned_day
+
+                new_due_day = (
+                    self._shift_months(
+                        due_day,
+                        month_delta,
+                    )
+                )
+
+                if new_due_day < planned_day:
+                    new_due_day = planned_day
+
+            payload.update(
+                {
+                    "planned_date":
+                        new_start_day.strftime(
+                            "%Y-%m-%d"
+                        ),
+
+                    "due_date":
+                        new_due_day.strftime(
+                            "%Y-%m-%d"
+                        ),
+
+                    "planned_start_time":
+                        task.planned_start_time,
+
+                    "planned_end_time":
+                        task.planned_end_time,
+
+                    "estimated_duration":
+                        int(
+                            task.estimated_duration
+                            or 0
+                        ),
+
+                    "delta_minutes":
+                        0,
+
+                    "delta_days":
+                        0,
+
+                    "delta_weeks":
+                        0,
+
+                    "delta_months":
+                        month_delta,
+                }
+            )
+
+            return payload
+
+        return None
+
+    def _apply_payload_to_task(
+        self,
+        item,
+        payload,
+    ):
+        task = item.task
+
+        task.planned_date = payload.get(
+            "planned_date"
+        )
+
+        task.due_date = payload.get(
+            "due_date"
+        )
+
+        task.planned_start_time = payload.get(
+            "planned_start_time"
+        )
+
+        task.planned_end_time = payload.get(
+            "planned_end_time"
+        )
+
+        task.estimated_duration = int(
+            payload.get(
+                "estimated_duration"
+            )
+            or 0
+        )
+
+    # --------------------------------------------------------
+    # Mouse interaction
+    # --------------------------------------------------------
+    def mousePressEvent(self, event):
+        if (
+            event.button()
+            != Qt.MouseButton.LeftButton
+        ):
+            super().mousePressEvent(
+                event
+            )
+            return
+
+        view_pos = self._event_view_pos(
+            event
+        )
+
+        item = self._gantt_item_at(
+            view_pos
+        )
+
+        if (
+            item is None
+            or not self._schedule_editable(
+                item
+            )
+        ):
+            super().mousePressEvent(
+                event
+            )
+            return
+
+        scene_pos = self.mapToScene(
+            view_pos
+        )
+
+        interaction_mode = (
+            self._bar_interaction_mode(
+                item,
+                scene_pos,
+            )
+        )
+
+        # Clicking title, status, progress, dependency markers, etc.
+        # must remain a selection/open action — never a schedule drag.
+        if interaction_mode is None:
+            super().mousePressEvent(
+                event
+            )
+            return
+
+        if interaction_mode in (
+            "left",
+            "right",
+        ):
+            self._resize_mode = (
+                interaction_mode
+            )
+
+            self._resize_item = item
+
+            self._resize_start_scene_x = (
+                scene_pos.x()
+            )
+
+            self._resize_start_item_x = (
+                item.pos().x()
+            )
+
+            self._resize_start_item_y = (
+                item.pos().y()
+            )
+
+            self._resize_moved = False
+
+            item.setSelected(
+                True
+            )
+
+            try:
+                self.viewport().setCursor(
+                    Qt.CursorShape.SizeHorCursor
+                )
+            except Exception:
+                pass
+
+            event.accept()
+            return
+
+        # Interior of the actual bar = existing move behaviour.
+        self._drag_item = item
+
+        self._drag_start_scene_x = (
+            scene_pos.x()
+        )
+
+        self._drag_start_item_x = (
+            item.pos().x()
+        )
+
+        self._drag_start_item_y = (
+            item.pos().y()
+        )
+
+        self._drag_moved = False
+
+        item.setSelected(
+            True
+        )
+
+        try:
+            self.viewport().setCursor(
+                Qt.CursorShape.ClosedHandCursor
+            )
+        except Exception:
+            pass
+
+        event.accept()
+
+
+    def mouseMoveEvent(self, event):
+        # --------------------------------------------------
+        # HOVER AFFORDANCE — tells operator exactly where resize works.
+        # --------------------------------------------------
+        if not (
+            event.buttons()
+            & Qt.MouseButton.LeftButton
+        ):
+            view_pos = self._event_view_pos(
+                event
+            )
+
+            item = self._gantt_item_at(
+                view_pos
+            )
+
+            mode = None
+
+            if (
+                item is not None
+                and self._schedule_editable(
+                    item
+                )
+            ):
+                scene_pos = self.mapToScene(
+                    view_pos
+                )
+
+                mode = (
+                    self._bar_interaction_mode(
+                        item,
+                        scene_pos,
+                    )
+                )
+
+            try:
+                if mode in (
+                    "left",
+                    "right",
+                ):
+                    self.viewport().setCursor(
+                        Qt.CursorShape.SizeHorCursor
+                    )
+
+                elif mode == "move":
+                    self.viewport().setCursor(
+                        Qt.CursorShape.OpenHandCursor
+                    )
+
+                else:
+                    self.viewport().setCursor(
+                        Qt.CursorShape.ArrowCursor
+                    )
+
+            except Exception:
+                pass
+
+            super().mouseMoveEvent(
+                event
+            )
+            return
+
+        # --------------------------------------------------
+        # RESIZE PREVIEW
+        # --------------------------------------------------
+        if (
+            self._resize_item is not None
+            and (
+                event.buttons()
+                & Qt.MouseButton.LeftButton
+            )
+        ):
+            view_pos = self._event_view_pos(
+                event
+            )
+
+            scene_pos = self.mapToScene(
+                view_pos
+            )
+
+            delta_x = (
+                scene_pos.x()
+                - self._resize_start_scene_x
+            )
+
+            if (
+                abs(delta_x)
+                >= self._drag_threshold_px
+            ):
+                self._resize_moved = True
+
+            if self._resize_moved:
+                item = self._resize_item
+
+                original_x = (
+                    self._resize_start_item_x
+                )
+
+                original_w = float(
+                    getattr(
+                        item,
+                        "bar_pixel_width",
+                        36.0,
+                    )
+                )
+
+                if (
+                    self._resize_mode
+                    == "left"
+                ):
+                    preview_x = min(
+                        original_x
+                        + delta_x,
+                        original_x
+                        + original_w
+                        - 12,
+                    )
+
+                    preview_w = max(
+                        12.0,
+                        original_w
+                        - (
+                            preview_x
+                            - original_x
+                        ),
+                    )
+
+                else:
+                    preview_x = (
+                        original_x
+                    )
+
+                    preview_w = max(
+                        12.0,
+                        original_w
+                        + delta_x,
+                    )
+
+                self._clear_resize_preview()
+
+                preview = QGraphicsRectItem(
+                    preview_x,
+                    self._resize_start_item_y
+                    + 6,
+                    preview_w,
+                    max(
+                        10,
+                        self.row_height
+                        - 12,
+                    ),
+                )
+
+                brush_color = QColor(
+                    self.planned_bar_color
+                    or "#3584E4"
+                )
+
+                brush_color.setAlpha(
+                    70
+                )
+
+                preview.setBrush(
+                    QBrush(
+                        brush_color
+                    )
+                )
+
+                preview.setPen(
+                    QPen(
+                        QColor(
+                            "#FFFFFF"
+                        ),
+                        1.5,
+                        Qt.PenStyle.DashLine,
+                    )
+                )
+
+                preview.setZValue(
+                    10000
+                )
+
+                self.scene.addItem(
+                    preview
+                )
+
+                self._resize_preview = (
+                    preview
+                )
+
+                try:
+                    item.setOpacity(
+                        0.55
+                    )
+                except Exception:
+                    pass
+
+            event.accept()
+            return
+
+        # --------------------------------------------------
+        # EXISTING MOVE PREVIEW
+        # --------------------------------------------------
+        if (
+            self._drag_item is None
+            or not (
+                event.buttons()
+                & Qt.MouseButton.LeftButton
+            )
+        ):
+            super().mouseMoveEvent(
+                event
+            )
+            return
+
+        view_pos = self._event_view_pos(
+            event
+        )
+
+        scene_pos = self.mapToScene(
+            view_pos
+        )
+
+        delta_x = (
+            scene_pos.x()
+            - self._drag_start_scene_x
+        )
+
+        if (
+            abs(delta_x)
+            >= self._drag_threshold_px
+        ):
+            self._drag_moved = True
+
+        if self._drag_moved:
+            self._drag_item.setPos(
+                self._drag_start_item_x
+                + delta_x,
+                self._drag_start_item_y,
+            )
+
+            try:
+                self._drag_item.setOpacity(
+                    0.82
+                )
+            except Exception:
+                pass
+
+        event.accept()
+
+
+    def mouseReleaseEvent(self, event):
+        # --------------------------------------------------
+        # RESIZE COMMIT
+        # --------------------------------------------------
+        if self._resize_item is not None:
+            item = self._resize_item
+
+            view_pos = self._event_view_pos(
+                event
+            )
+
+            scene_pos = self.mapToScene(
+                view_pos
+            )
+
+            delta_x = (
+                scene_pos.x()
+                - self._resize_start_scene_x
+            )
+
+            payload = None
+
+            if self._resize_moved:
+                payload = (
+                    self._build_resize_payload(
+                        item,
+                        self._resize_mode,
+                        delta_x,
+                    )
+                )
+
+            try:
+                item.setOpacity(
+                    1.0
+                )
+            except Exception:
+                pass
+
+            if payload:
+                self._apply_payload_to_task(
+                    item,
+                    payload,
+                )
+
+                self.schedule_change_requested.emit(
+                    payload
+                )
+
+            self._reset_drag_state()
+
+            event.accept()
+            return
+
+        # --------------------------------------------------
+        # EXISTING MOVE COMMIT
+        # --------------------------------------------------
+        item = self._drag_item
+
+        if item is None:
+            super().mouseReleaseEvent(
+                event
+            )
+            return
+
+        view_pos = self._event_view_pos(
+            event
+        )
+
+        scene_pos = self.mapToScene(
+            view_pos
+        )
+
+        delta_x = (
+            scene_pos.x()
+            - self._drag_start_scene_x
+        )
+
+        # Restore preview position. Database truth rebuilds chart.
+        item.setPos(
+            self._drag_start_item_x,
+            self._drag_start_item_y,
+        )
+
+        try:
+            item.setOpacity(
+                1.0
+            )
+        except Exception:
+            pass
+
+        payload = None
+
+        if self._drag_moved:
+            payload = (
+                self._build_schedule_payload(
+                    item,
+                    delta_x,
+                )
+            )
+
+        if payload:
+            self._apply_payload_to_task(
+                item,
+                payload,
+            )
+
+            self.schedule_change_requested.emit(
+                payload
+            )
+
+        self._reset_drag_state()
+
+        super().mouseReleaseEvent(
+            event
+        )
+
+
+    def mouseDoubleClickEvent(self, event):
+        item = self._gantt_item_at(
+            self._event_view_pos(event)
+        )
+
+        if item is not None:
+            self.task_action_requested.emit(
+                "open",
+                int(item.task.id),
+            )
+            event.accept()
+            return
+
+        super().mouseDoubleClickEvent(event)
+
+    # --------------------------------------------------------
+    # Right-click professional task actions
+    # --------------------------------------------------------
+    def contextMenuEvent(self, event):
+        item = self._gantt_item_at(
+            event.pos()
+        )
+
+        if item is None:
+            super().contextMenuEvent(event)
+            return
+
+        task = item.task
+        is_nested = (
+            getattr(
+                task,
+                "gantt_item_type",
+                "task",
+            )
+            != "task"
+        )
+
+        menu = QMenu(self)
+
+        open_action = menu.addAction(
+            "✏ Open Task"
+        )
+
+        menu.addSeparator()
+
+        start_action = menu.addAction(
+            "▶ Start"
+        )
+
+        pause_action = menu.addAction(
+            "⏸ Pause"
+        )
+
+        complete_action = menu.addAction(
+            "✓ Complete"
+        )
+
+        # Execution status actions are only valid for real main tasks.
+        for action in (
+            start_action,
+            pause_action,
+            complete_action,
+        ):
+            action.setEnabled(
+                not is_nested
+                and task.status
+                not in (
+                    TaskStatus.COMPLETED,
+                    TaskStatus.CANCELLED,
+                )
+            )
+
+        chosen = menu.exec(
+            event.globalPos()
+        )
+
+        if chosen is None:
+            return
+
+        if chosen == open_action:
+            action_name = "open"
+        elif chosen == start_action:
+            action_name = "start"
+        elif chosen == pause_action:
+            action_name = "pause"
+        elif chosen == complete_action:
+            action_name = "complete"
+        else:
+            return
+
+        self.task_action_requested.emit(
+            action_name,
+            int(task.id),
+        )
+
+    # --------------------------------------------------------
+    # Keyboard precision nudging
+    # --------------------------------------------------------
+    def nudge_selected_task(self, direction):
+        """
+        Visible-toolbar equivalent of keyboard Left/Right.
+
+        direction:
+          -1 = Earlier
+          +1 = Later
+        """
+        selected = [
+            item
+            for item in self.scene.selectedItems()
+            if isinstance(
+                item,
+                GanttTaskItem,
+            )
+        ]
+
+        if not selected:
+            return False, "Select a Gantt task first."
+
+        item = selected[0]
+
+        if not self._schedule_editable(item):
+            return (
+                False,
+                "This task cannot be rescheduled in the current mode.",
+            )
+
+        if not self.columns:
+            return False, "Timeline is not ready."
+
+        col_width = float(
+            self.columns[0].width
+        )
+
+        if self.zoom_mode == ZoomLevel.HOURLY:
+            pixel_delta = (
+                int(direction)
+                * col_width
+                * self.hourly_snap_minutes
+                / 60.0
+            )
+        else:
+            pixel_delta = (
+                int(direction)
+                * col_width
+            )
+
+        payload = self._build_schedule_payload(
+            item,
+            pixel_delta,
+        )
+
+        if not payload:
+            return False, "No schedule change was produced."
+
+        self._apply_payload_to_task(
+            item,
+            payload,
+        )
+
+        self.schedule_change_requested.emit(
+            payload
+        )
+
+        return True, ""
+
+    def keyPressEvent(self, event):
+        if event.key() not in (
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+        ):
+            super().keyPressEvent(event)
+            return
+
+        selected = [
+            item
+            for item in self.scene.selectedItems()
+            if isinstance(
+                item,
+                GanttTaskItem,
+            )
+        ]
+
+        if not selected:
+            super().keyPressEvent(event)
+            return
+
+        item = selected[0]
+
+        if not self._schedule_editable(
+            item
+        ):
+            super().keyPressEvent(event)
+            return
+
+        direction = (
+            -1
+            if event.key()
+            == Qt.Key.Key_Left
+            else 1
+        )
+
+        if not self.columns:
+            return
+
+        col_width = float(
+            self.columns[0].width
+        )
+
+        if self.zoom_mode == ZoomLevel.HOURLY:
+            pixel_delta = (
+                direction
+                * col_width
+                * self.hourly_snap_minutes
+                / 60.0
+            )
+        else:
+            # Daily / Weekly / Monthly each move by one
+            # visible calendar column.
+            pixel_delta = (
+                direction
+                * col_width
+            )
+
+        payload = self._build_schedule_payload(
+            item,
+            pixel_delta,
+        )
+
+        if payload:
+            self._apply_payload_to_task(
+                item,
+                payload,
+            )
+
+            self.schedule_change_requested.emit(
+                payload
+            )
+
+        event.accept()
+
+    def _clear_dependency_graphics(
+        self,
+    ):
+        for graphic in (
+            self._dependency_graphics
+            or []
+        ):
+            try:
+                if graphic.scene() is not None:
+                    self.scene.removeItem(
+                        graphic
+                    )
+            except Exception:
+                pass
+
+        self._dependency_graphics = []
+
+    def _draw_dependency_arrows(
+        self,
+    ):
+        """
+        Draw routed Finish→Start dependency arrows.
+
+        Colors:
+          grey/blue : valid FS dependency
+          orange    : timing violation
+          red       : critical-path dependency
+        """
+        self._clear_dependency_graphics()
+
+        item_map = dict(
+            self._rendered_task_items
+            or {}
+        )
+
+        task_map = {
+            int(task.id): task
+            for task in self.tasks
+            if (
+                task.id is not None
+                and getattr(
+                    task,
+                    "gantt_item_type",
+                    "task",
+                )
+                == "task"
+            )
+        }
+
+        for successor_id, successor in task_map.items():
+            successor_item = item_map.get(
+                successor_id
+            )
+
+            if successor_item is None:
+                continue
+
+            for predecessor_id in (
+                successor.dependencies
+                or []
+            ):
+                try:
+                    predecessor_id = int(
+                        predecessor_id
+                    )
+                except Exception:
+                    continue
+
+                predecessor = task_map.get(
+                    predecessor_id
+                )
+
+                predecessor_item = item_map.get(
+                    predecessor_id
+                )
+
+                if (
+                    predecessor is None
+                    or predecessor_item is None
+                ):
+                    continue
+
+                start = QPointF(
+                    predecessor_item.scenePos().x()
+                    + float(
+                        getattr(
+                            predecessor_item,
+                            "bar_pixel_width",
+                            36.0,
+                        )
+                    ),
+                    predecessor_item.scenePos().y()
+                    + self.row_height / 2,
+                )
+
+                end = QPointF(
+                    successor_item.scenePos().x(),
+                    successor_item.scenePos().y()
+                    + self.row_height / 2,
+                )
+
+                violation = (
+                    GanttDependencyEngine
+                    .edge_violation(
+                        predecessor,
+                        successor,
+                    )
+                )
+
+                critical_edge = (
+                    bool(
+                        getattr(
+                            predecessor,
+                            "gantt_critical_path",
+                            False,
+                        )
+                    )
+                    and bool(
+                        getattr(
+                            successor,
+                            "gantt_critical_path",
+                            False,
+                        )
+                    )
+                )
+
+                if violation:
+                    color = QColor(
+                        "#F97316"
+                    )
+                    width = 2.5
+
+                elif critical_edge:
+                    color = QColor(
+                        "#DC2626"
+                    )
+                    width = 2.5
+
+                else:
+                    color = QColor(
+                        "#64748B"
+                    )
+                    width = 1.5
+
+                path = QPainterPath()
+                path.moveTo(
+                    start
+                )
+
+                # Orthogonal routing provides better readability than
+                # diagonal lines across task bars.
+                route_x = max(
+                    start.x() + 14,
+                    (
+                        start.x()
+                        + end.x()
+                    )
+                    / 2,
+                )
+
+                path.lineTo(
+                    route_x,
+                    start.y(),
+                )
+
+                path.lineTo(
+                    route_x,
+                    end.y(),
+                )
+
+                path.lineTo(
+                    end.x() - 7,
+                    end.y(),
+                )
+
+                arrow = QGraphicsPathItem(
+                    path
+                )
+
+                pen = QPen(
+                    color,
+                    width,
+                )
+
+                if violation:
+                    pen.setStyle(
+                        Qt.PenStyle.DashLine
+                    )
+
+                arrow.setPen(
+                    pen
+                )
+                arrow.setBrush(
+                    Qt.NoBrush
+                )
+                arrow.setZValue(
+                    8000
+                )
+
+                arrow.setToolTip(
+                    (
+                        "⚠ Finish→Start dependency violation"
+                        if violation
+                        else (
+                            "◆ Critical-path dependency"
+                            if critical_edge
+                            else "Finish→Start dependency"
+                        )
+                    )
+                    + "\\n"
+                    + predecessor.title
+                    + " → "
+                    + successor.title
+                )
+
+                self.scene.addItem(
+                    arrow
+                )
+
+                self._dependency_graphics.append(
+                    arrow
+                )
+
+                # Arrow head.
+                tip = QPointF(
+                    end.x(),
+                    end.y(),
+                )
+
+                head = QPolygonF([
+                    tip,
+                    QPointF(
+                        tip.x() - 8,
+                        tip.y() - 5,
+                    ),
+                    QPointF(
+                        tip.x() - 8,
+                        tip.y() + 5,
+                    ),
+                ])
+
+                head_item = QGraphicsPolygonItem(
+                    head
+                )
+
+                head_item.setBrush(
+                    QBrush(color)
+                )
+
+                head_item.setPen(
+                    QPen(
+                        color,
+                        1.0,
+                    )
+                )
+
+                head_item.setZValue(
+                    8001
+                )
+
+                self.scene.addItem(
+                    head_item
+                )
+
+                self._dependency_graphics.append(
+                    head_item
+                )
+
+    def set_planned_bar_color(
+        self,
+        color,
+    ):
+        self.planned_bar_color = (
+            color
+            or "#3584E4"
+        )
+
+        if self.settings_manager:
+            self.settings_manager.set(
+                "gantt_planned_bar_color",
+                self.planned_bar_color,
+            )
+
+        self.rebuild_chart()
+
+    def set_bar_style(self, style):
+        self.bar_style = (
+            style
+            or "rounded"
+        )
+
+        if self.settings_manager:
+            self.settings_manager.set(
+                "gantt_bar_style",
+                self.bar_style,
+            )
+
+        self.rebuild_chart()
+
+    def set_color_profile(self, profile: GanttColorProfile, app_theme: str = "dark"):
+        self.color_profile = profile
+        self.rebuild_chart()
+
+    def set_zoom_mode(self, mode_str: str):
+        mode_str = mode_str.lower().replace(" ", "_")
+        try:
+            self.zoom_mode = ZoomLevel(mode_str)
+        except ValueError:
+            self.zoom_mode = ZoomLevel.DAILY
+        self.rebuild_chart()
+
+    def set_tasks(self, tasks: List[Task], projects_map: Dict[int, str]):
+        self.tasks = list(tasks)
+        self.projects_map = dict(projects_map)
+
+        # One transient dependency/critical-path analysis per
+        # authoritative task refresh.
+        GanttDependencyEngine.annotate(
+            self.tasks
+        )
+
+        self.rebuild_chart()
+
+    def set_filters(self, show_actual=True, show_completed=True, project_id=None, priority=None):
+        self.show_actual_bars = show_actual
+        self.show_completed = show_completed
+        self.filter_project_id = project_id
+        self.filter_priority = priority
+        self.rebuild_chart()
+
+    def auto_center_today(self):
+        self.anchor_date = date.today()
+        self.rebuild_chart()
+
+    def navigate_period(self, step: int):
+        if self.zoom_mode == ZoomLevel.DAILY:
+            self.anchor_date += timedelta(days=step)
+        elif self.zoom_mode == ZoomLevel.WEEKLY:
+            self.anchor_date += timedelta(weeks=step)
+        elif self.zoom_mode == ZoomLevel.MONTHLY:
+            from todo_bird_app.gantt.timescale_engine import add_months
+            self.anchor_date = add_months(self.anchor_date, step)
+        elif self.zoom_mode == ZoomLevel.YEARLY:
+            self.anchor_date = date(self.anchor_date.year + step, self.anchor_date.month, 1)
+        elif self.zoom_mode == ZoomLevel.MULTI_YEAR:
+            self.anchor_date = date(self.anchor_date.year + (step * 5), self.anchor_date.month, 1)
+        self.rebuild_chart()
+
+    def rebuild_chart(self):
+        self._rendered_task_items = {}
+        self._clear_dependency_graphics()
+
+        self.scene.clear()
+        app_theme = self.settings_manager.get("theme", "dark") if self.settings_manager else "dark"
+        colors = self.color_profile.get_effective_colors(
+            app_theme
+        )
+
+        # Planned baseline color is a user preference independent
+        # of timing-performance colors.
+        colors["planned_color"] = (
+            self.planned_bar_color
+            or "#3584E4"
+        )
+
+        # 1. Apply filters
+        filtered_tasks = list(self.tasks)
+        if not self.show_completed:
+            filtered_tasks = [t for t in filtered_tasks if t.status != TaskStatus.COMPLETED]
+        if self.filter_project_id:
+            filtered_tasks = [t for t in filtered_tasks if t.project_id == self.filter_project_id]
+        if self.filter_priority:
+            filtered_tasks = [t for t in filtered_tasks if t.priority.value == self.filter_priority]
+
+        # 2. Generate non-repeating timeline columns from TimescaleEngine
+        self.columns = TimescaleEngine.generate_columns(
+            self.zoom_mode, self.anchor_date, filtered_tasks
+        )
+
+        if not self.columns:
+            return
+
+        total_width = self.columns[-1].x_offset + self.columns[-1].width
+        total_height = self.header_height + max(len(filtered_tasks), 5) * self.row_height + 60.0
+        self.scene.setSceneRect(0, 0, max(total_width, 800.0), max(total_height, 600.0))
+
+        # 3. Render Header Timeline Background
+        header_bg = self.scene.addRect(0, 0, total_width, self.header_height)
+        header_bg.setBrush(QBrush(QColor(colors.get("header_color", "#181825"))))
+        header_bg.setPen(QPen(Qt.NoPen))
+
+        # Working Week Service for user-defined weekend shading
+        from todo_bird_app.services.working_week import WorkingWeekService
+        ww_service = WorkingWeekService(self.settings_manager) if self.settings_manager else None
+        enable_shading = self.settings_manager.get("enable_weekend_shading", True) if self.settings_manager else True
+        weekend_opacity = self.settings_manager.get("weekend_opacity", 30) if self.settings_manager else 30
+
+        today = date.today()
+        today_x = TimescaleEngine.date_to_x(today, self.columns)
+
+        # 4. Render Period Columns & Grid Lines
+        for col in self.columns:
+            # Weekend Shading (Daily Mode)
+            if self.zoom_mode == ZoomLevel.DAILY and ww_service:
+                if ww_service.is_weekend(col.start_date) and enable_shading:
+                    w_bg = self.scene.addRect(col.x_offset, self.header_height, col.width, total_height)
+                    base_col = QColor(colors.get("weekend_background", "#2A2F3A" if app_theme == "dark" else "#F3F4F6"))
+                    base_col.setAlphaF(max(0.0, min(1.0, weekend_opacity / 100.0)))
+                    w_bg.setBrush(QBrush(base_col))
+                    w_bg.setPen(QPen(Qt.NoPen))
+
+            # Vertical Grid Line
+            grid_line = self.scene.addLine(col.x_offset, self.header_height, col.x_offset, total_height)
+            grid_line.setPen(QPen(QColor(colors.get("grid_color", "rgba(255,255,255,0.08)"))))
+
+            # Primary Header Text (Top)
+            primary_lbl = self.scene.addText(col.primary_header)
+            primary_lbl.setDefaultTextColor(QColor(colors.get("text_secondary", "#9CA3AF")))
+            primary_lbl.setFont(QFont("Inter", 8, QFont.Bold))
+            primary_lbl.setPos(col.x_offset + 4, 2)
+
+            # Secondary Header Text (Middle)
+            sec_color = QColor(colors.get("today_marker_color", "#E95420")) if col.is_today_period else QColor(colors.get("text_primary", "#F3F4F6"))
+            sec_lbl = self.scene.addText(col.secondary_header)
+            sec_lbl.setDefaultTextColor(sec_color)
+            sec_lbl.setFont(QFont("Inter", 10, QFont.Bold))
+            sec_lbl.setPos(col.x_offset + 4, 18)
+
+            # Sub-label Text (Bottom)
+            if col.sub_label:
+                sub_lbl = self.scene.addText(col.sub_label)
+                sub_lbl.setDefaultTextColor(QColor(colors.get("text_secondary", "#9CA3AF")))
+                sub_lbl.setFont(QFont("Inter", 7))
+                sub_lbl.setPos(col.x_offset + 4, 36)
+
+        # Header Bottom Separator Line
+        header_sep = self.scene.addLine(0, self.header_height, total_width, self.header_height)
+        header_sep.setPen(QPen(QColor(colors.get("grid_color", "#374151")), 1))
+
+        # 5. Render Today Marker Line
+        today_line = self.scene.addLine(today_x, 0, today_x, total_height)
+        today_line.setPen(QPen(QColor(colors.get("today_marker_color", "#E95420")), 2, Qt.DashLine))
+
+        # 6. Render Live Current Time Line
+        now = datetime.now()
+        minute_offset = (now.hour * 60 + now.minute) / 1440.0
+        cur_time_x = today_x + (minute_offset * (self.columns[0].width if self.columns else 60.0))
+        self.current_time_line_item = self.scene.addLine(cur_time_x, 0, cur_time_x, total_height)
+        self.current_time_line_item.setPen(QPen(QColor(colors.get("current_time_marker_color", "#EF4444")), 2))
+
+        if not filtered_tasks:
+            text = self.scene.addText("📊 No tasks to display in Gantt view.")
+            text.setDefaultTextColor(QColor(colors.get("text_color", "#9CA3AF")))
+            text.setFont(QFont("Inter", 12))
+            text.setPos(50, 80)
+            return
+
+        # 7. Render Task Bars mapped to Timescale Engine X coordinates
+        visible_start = self.columns[0].start_date
+        visible_end = self.columns[-1].end_date
+
+        for idx, task in enumerate(filtered_tasks):
+            p_date_str = task.planned_date or today.strftime("%Y-%m-%d")
+            try:
+                p_start = datetime.strptime(p_date_str, "%Y-%m-%d").date()
+            except Exception:
+                p_start = today
+
+            if self.zoom_mode == ZoomLevel.HOURLY:
+                # Filter tasks for selected anchor date in HOURLY mode
+                if p_start != self.anchor_date:
+                    continue
+
+                col_w = self.columns[0].width
+                # Calculate time offsets
+                sh, sm = 8, 0
+                if task.planned_start_time and ":" in task.planned_start_time:
+                    try:
+                        sh, sm = map(int, task.planned_start_time.split(":")[:2])
+                    except Exception:
+                        pass
+
+                duration_m = task.estimated_duration if task.estimated_duration > 0 else 30
+                start_minutes = sh * 60 + sm
+                end_minutes = start_minutes + duration_m
+
+                col_x_start = (start_minutes / 60.0) * col_w
+                col_x_end = (end_minutes / 60.0) * col_w
+                bar_width = max(36.0, col_x_end - col_x_start)
+
+                start_col_index = int(start_minutes // 60)
+                dur_cols = max(0.6, bar_width / col_w)
+            else:
+                # Multi-day / Daily modes:
+                # the Gantt schedule must represent the actual calendar plan:
+                # Planned Date -> Due Date.
+                #
+                # Estimated minutes are useful for workload/capacity, but they
+                # must not shorten a task whose due date is several days later.
+                p_end = p_start
+
+                if task.due_date:
+                    try:
+                        due_date = datetime.strptime(
+                            task.due_date,
+                            "%Y-%m-%d"
+                        ).date()
+
+                        # Never allow an invalid due date before planned start
+                        # to draw the bar backwards.
+                        if due_date >= p_start:
+                            p_end = due_date
+                    except Exception:
+                        pass
+
+                # If no valid Due Date exists, fall back to estimated work span.
+                if p_end == p_start and not task.due_date:
+                    est_days = (
+                        max(
+                            1,
+                            int(
+                                (task.estimated_duration + 479) / 480
+                            )
+                        )
+                        if task.estimated_duration > 0
+                        else 1
+                    )
+                    p_end = p_start + timedelta(days=est_days - 1)
+
+                # Range intersection check
+                if not TimescaleEngine.intersects_visible_range(p_start, p_end, visible_start, visible_end):
+                    continue
+
+                col_x_start = TimescaleEngine.date_to_x(p_start, self.columns)
+                col_x_end = TimescaleEngine.date_to_x(p_end + timedelta(days=1), self.columns)
+                bar_width = max(24.0, col_x_end - col_x_start)
+
+                # Convert to col index equivalent for item rendering
+                start_col_index = max(0, int(col_x_start / self.columns[0].width))
+                dur_cols = max(1.0, bar_width / self.columns[0].width)
+
+            timing_status = TimingStatus.ON_TRACK
+            timing_delay_minutes = 0
+            timing_delay_percentage = 0.0
+
+            if self.delay_engine:
+                (
+                    timing_status,
+                    timing_delay_minutes,
+                    timing_delay_percentage,
+                ) = self.delay_engine.analyze_task_timing(
+                    task
+                )
+
+            # Transient Gantt presentation metadata.
+            # Nothing is written to DB here.
+            task.gantt_timing_delay_minutes = (
+                timing_delay_minutes
+            )
+            task.gantt_timing_delay_percentage = (
+                timing_delay_percentage
+            )
+
+            proj_name = self.projects_map.get(task.project_id, "Inbox")
+            item = GanttTaskItem(
+                task, row=idx, col_start=start_col_index, duration_cols=dur_cols,
+                col_width=self.columns[0].width, color_profile=colors, timing_status=timing_status,
+                project_name=proj_name,
+                row_height=self.row_height,
+                show_actual_bars=self.show_actual_bars,
+                bar_style=self.bar_style,
+            )
+            item.setPos(col_x_start, self.header_height + idx * self.row_height)
+            self.scene.addItem(item)
+
+            if (
+                task.id is not None
+                and getattr(
+                    task,
+                    "gantt_item_type",
+                    "task",
+                )
+                == "task"
+            ):
+                self._rendered_task_items[
+                    int(task.id)
+                ] = item
+        self._draw_dependency_arrows()

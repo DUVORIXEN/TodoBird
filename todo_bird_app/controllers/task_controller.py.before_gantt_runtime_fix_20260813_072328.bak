@@ -1,0 +1,114 @@
+import logging
+from typing import List, Optional
+from datetime import date
+from PySide6.QtCore import QObject, Signal
+
+from todo_bird_app.models.task import Task, TaskStatus, TaskPriority, TaskCategory
+from todo_bird_app.models.project import Project
+
+logger = logging.getLogger(__name__)
+
+class TaskController(QObject):
+    """
+    Controller handling task and project CRUD logic with signal notifications.
+    """
+    tasks_changed = Signal()
+    projects_changed = Signal()
+
+    def __init__(self, db_manager, parent=None):
+        super().__init__(parent)
+        self.db_manager = db_manager
+
+    def add_task(self, task: Task) -> int:
+        task_dict = task.to_dict()
+        task_id = self.db_manager.insert_task(task_dict)
+        logger.info(f"Task added: ID={task_id}, Title='{task.title}'")
+        self.tasks_changed.emit()
+        return task_id
+
+    def update_task(self, task: Task) -> bool:
+        if task.id is None:
+            return False
+        success = self.db_manager.update_task(task.to_dict())
+        if success:
+            logger.info(f"Task updated: ID={task.id}, Title='{task.title}'")
+            self.tasks_changed.emit()
+        return success
+
+    def delete_task(self, task_id: int) -> bool:
+        success = self.db_manager.delete_task(task_id)
+        if success:
+            logger.info(f"Task deleted: ID={task_id}")
+            self.tasks_changed.emit()
+        return success
+
+    def toggle_task_complete(self, task_id: int) -> bool:
+        task_data = self.db_manager.get_task_by_id(task_id)
+        if not task_data:
+            return False
+
+        task = Task.from_row(task_data)
+        if task.status == TaskStatus.COMPLETED:
+            task.status = TaskStatus.INBOX if task.planned_date is None else TaskStatus.PLANNED
+            task.progress = 0
+            task.actual_end_time = None
+        else:
+            task.status = TaskStatus.COMPLETED
+            task.progress = 100
+            task.actual_end_time = date.today().strftime("%H:%M")
+
+        return self.update_task(task)
+
+    def get_task(self, task_id: int) -> Optional[Task]:
+        data = self.db_manager.get_task_by_id(task_id)
+        return Task.from_row(data) if data else None
+
+    def get_inbox_tasks(self, limit: int = 100, offset: int = 0) -> List[Task]:
+        rows = self.db_manager.get_inbox_tasks(limit=limit, offset=offset)
+        return [Task.from_row(r) for r in rows]
+
+    def get_inbox_tasks_count(self) -> int:
+        return self.db_manager.get_inbox_tasks_count()
+
+    def get_today_tasks(self) -> List[Task]:
+        today_str = date.today().strftime("%Y-%m-%d")
+        rows = self.db_manager.get_all_tasks(planned_date=today_str)
+        return [Task.from_row(r) for r in rows if r.get("status") != "Completed"]
+
+    def get_upcoming_tasks(self, end_date: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[Task]:
+        today_str = date.today().strftime("%Y-%m-%d")
+        rows = self.db_manager.get_upcoming_tasks_range(today_str, end_date=end_date, limit=limit, offset=offset)
+        return [Task.from_row(r) for r in rows]
+
+    def get_upcoming_tasks_count(self, end_date: Optional[str] = None) -> int:
+        today_str = date.today().strftime("%Y-%m-%d")
+        return self.db_manager.get_upcoming_tasks_count(today_str, end_date=end_date)
+
+    def get_completed_tasks(self, limit: int = 100, offset: int = 0) -> List[Task]:
+        rows = self.db_manager.get_completed_tasks(limit=limit, offset=offset)
+        return [Task.from_row(r) for r in rows]
+
+    def get_completed_tasks_count(self) -> int:
+        return self.db_manager.get_completed_tasks_count()
+
+    def get_project_tasks(self, project_id: int) -> List[Task]:
+        rows = self.db_manager.get_tasks_by_project(project_id)
+        return [Task.from_row(r) for r in rows]
+
+    def get_all_tasks(self) -> List[Task]:
+        rows = self.db_manager.get_all_tasks()
+        return [Task.from_row(r) for r in rows]
+
+    def search_tasks(self, query: str) -> List[Task]:
+        rows = self.db_manager.search_tasks(query)
+        return [Task.from_row(r) for r in rows]
+
+    # Project management methods
+    def get_all_projects(self) -> List[Project]:
+        rows = self.db_manager.get_all_projects()
+        return [Project.from_row(r) for r in rows]
+
+    def add_project(self, project: Project) -> int:
+        proj_id = self.db_manager.insert_project(project.to_dict())
+        self.projects_changed.emit()
+        return proj_id

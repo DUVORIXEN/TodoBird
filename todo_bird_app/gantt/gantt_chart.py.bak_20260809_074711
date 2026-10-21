@@ -1,0 +1,241 @@
+import logging
+from datetime import date, datetime, timedelta
+from typing import List, Dict, Optional
+
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem, QMenu
+from PySide6.QtCore import Qt, Signal, QRectF, QTimer
+from PySide6.QtGui import QPainter, QBrush, QColor, QPen, QFont, QAction
+
+from todo_bird_app.gantt.gantt_theme import GanttColorProfile, DEFAULT_GANTT_COLORS
+from todo_bird_app.gantt.gantt_items import GanttTaskItem
+from todo_bird_app.gantt.timescale_engine import TimescaleEngine, ZoomLevel, TimelineColumn
+from todo_bird_app.controllers.delay_engine import DelayEngine, TimingStatus
+from todo_bird_app.models.task import Task, TaskStatus
+
+logger = logging.getLogger(__name__)
+
+class GanttChartWidget(QGraphicsView):
+    """
+    High-performance, interactive PySide6 QGraphicsView Gantt timeline canvas.
+    Supports Multi-Year TimescaleEngine, ISO week headers, range-aware filtering,
+    and responsive navigation.
+    """
+    task_action_requested = Signal(str, int)  # (action_type, task_id)
+
+    def __init__(self, settings_manager=None, parent=None):
+        super().__init__(parent)
+        self.settings_manager = settings_manager
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
+
+        self.zoom_mode = ZoomLevel.DAILY
+        self.anchor_date = date.today()
+        self.header_height = 60.0
+        self.row_height = 42.0
+
+        self.color_profile = GanttColorProfile()
+        self.delay_engine = DelayEngine(settings_manager) if settings_manager else None
+
+        self.tasks: List[Task] = []
+        self.projects_map: Dict[int, str] = {}
+        self.show_actual_bars = True
+        self.show_completed = True
+        self.filter_project_id = None
+        self.filter_priority = None
+
+        self.columns: List[TimelineColumn] = []
+        self.current_time_line_item = None
+
+        self._setup_view_properties()
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(60000)
+        self.timer.timeout.connect(self.rebuild_chart)
+        self.timer.start()
+
+    def _setup_view_properties(self):
+        self.setRenderHint(QPainter.Antialiasing, True)
+        self.setRenderHint(QPainter.TextAntialiasing, True)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+    def set_color_profile(self, profile: GanttColorProfile, app_theme: str = "dark"):
+        self.color_profile = profile
+        self.rebuild_chart()
+
+    def set_zoom_mode(self, mode_str: str):
+        mode_str = mode_str.lower().replace(" ", "_")
+        try:
+            self.zoom_mode = ZoomLevel(mode_str)
+        except ValueError:
+            self.zoom_mode = ZoomLevel.DAILY
+        self.rebuild_chart()
+
+    def set_tasks(self, tasks: List[Task], projects_map: Dict[int, str]):
+        self.tasks = list(tasks)
+        self.projects_map = dict(projects_map)
+        self.rebuild_chart()
+
+    def set_filters(self, show_actual=True, show_completed=True, project_id=None, priority=None):
+        self.show_actual_bars = show_actual
+        self.show_completed = show_completed
+        self.filter_project_id = project_id
+        self.filter_priority = priority
+        self.rebuild_chart()
+
+    def auto_center_today(self):
+        self.anchor_date = date.today()
+        self.rebuild_chart()
+
+    def navigate_period(self, step: int):
+        if self.zoom_mode == ZoomLevel.DAILY:
+            self.anchor_date += timedelta(days=step)
+        elif self.zoom_mode == ZoomLevel.WEEKLY:
+            self.anchor_date += timedelta(weeks=step)
+        elif self.zoom_mode == ZoomLevel.MONTHLY:
+            from todo_bird_app.gantt.timescale_engine import add_months
+            self.anchor_date = add_months(self.anchor_date, step)
+        elif self.zoom_mode == ZoomLevel.YEARLY:
+            self.anchor_date = date(self.anchor_date.year + step, self.anchor_date.month, 1)
+        elif self.zoom_mode == ZoomLevel.MULTI_YEAR:
+            self.anchor_date = date(self.anchor_date.year + (step * 5), self.anchor_date.month, 1)
+        self.rebuild_chart()
+
+    def rebuild_chart(self):
+        self.scene.clear()
+        app_theme = self.settings_manager.get("theme", "dark") if self.settings_manager else "dark"
+        colors = self.color_profile.get_effective_colors(app_theme)
+
+        # 1. Apply filters
+        filtered_tasks = list(self.tasks)
+        if not self.show_completed:
+            filtered_tasks = [t for t in filtered_tasks if t.status != TaskStatus.COMPLETED]
+        if self.filter_project_id:
+            filtered_tasks = [t for t in filtered_tasks if t.project_id == self.filter_project_id]
+        if self.filter_priority:
+            filtered_tasks = [t for t in filtered_tasks if t.priority.value == self.filter_priority]
+
+        # 2. Generate non-repeating timeline columns from TimescaleEngine
+        self.columns = TimescaleEngine.generate_columns(
+            self.zoom_mode, self.anchor_date, filtered_tasks
+        )
+
+        if not self.columns:
+            return
+
+        total_width = self.columns[-1].x_offset + self.columns[-1].width
+        total_height = self.header_height + max(len(filtered_tasks), 5) * self.row_height + 60.0
+        self.scene.setSceneRect(0, 0, max(total_width, 800.0), max(total_height, 600.0))
+
+        # 3. Render Header Timeline Background
+        header_bg = self.scene.addRect(0, 0, total_width, self.header_height)
+        header_bg.setBrush(QBrush(QColor(colors.get("header_color", "#181825"))))
+        header_bg.setPen(QPen(Qt.NoPen))
+
+        # Working Week Service for user-defined weekend shading
+        from todo_bird_app.services.working_week import WorkingWeekService
+        ww_service = WorkingWeekService(self.settings_manager) if self.settings_manager else None
+        enable_shading = self.settings_manager.get("enable_weekend_shading", True) if self.settings_manager else True
+        weekend_opacity = self.settings_manager.get("weekend_opacity", 30) if self.settings_manager else 30
+
+        today = date.today()
+        today_x = TimescaleEngine.date_to_x(today, self.columns)
+
+        # 4. Render Period Columns & Grid Lines
+        for col in self.columns:
+            # Weekend Shading (Daily Mode)
+            if self.zoom_mode == ZoomLevel.DAILY and ww_service:
+                if ww_service.is_weekend(col.start_date) and enable_shading:
+                    w_bg = self.scene.addRect(col.x_offset, self.header_height, col.width, total_height)
+                    base_col = QColor(colors.get("weekend_background", "#2A2F3A" if app_theme == "dark" else "#F3F4F6"))
+                    base_col.setAlphaF(max(0.0, min(1.0, weekend_opacity / 100.0)))
+                    w_bg.setBrush(QBrush(base_col))
+                    w_bg.setPen(QPen(Qt.NoPen))
+
+            # Vertical Grid Line
+            grid_line = self.scene.addLine(col.x_offset, self.header_height, col.x_offset, total_height)
+            grid_line.setPen(QPen(QColor(colors.get("grid_color", "rgba(255,255,255,0.08)"))))
+
+            # Primary Header Text (Top)
+            primary_lbl = self.scene.addText(col.primary_header)
+            primary_lbl.setDefaultTextColor(QColor(colors.get("text_secondary", "#9CA3AF")))
+            primary_lbl.setFont(QFont("Inter", 8, QFont.Bold))
+            primary_lbl.setPos(col.x_offset + 4, 2)
+
+            # Secondary Header Text (Middle)
+            sec_color = QColor(colors.get("today_marker_color", "#E95420")) if col.is_today_period else QColor(colors.get("text_primary", "#F3F4F6"))
+            sec_lbl = self.scene.addText(col.secondary_header)
+            sec_lbl.setDefaultTextColor(sec_color)
+            sec_lbl.setFont(QFont("Inter", 10, QFont.Bold))
+            sec_lbl.setPos(col.x_offset + 4, 18)
+
+            # Sub-label Text (Bottom)
+            if col.sub_label:
+                sub_lbl = self.scene.addText(col.sub_label)
+                sub_lbl.setDefaultTextColor(QColor(colors.get("text_secondary", "#9CA3AF")))
+                sub_lbl.setFont(QFont("Inter", 7))
+                sub_lbl.setPos(col.x_offset + 4, 36)
+
+        # Header Bottom Separator Line
+        header_sep = self.scene.addLine(0, self.header_height, total_width, self.header_height)
+        header_sep.setPen(QPen(QColor(colors.get("grid_color", "#374151")), 1))
+
+        # 5. Render Today Marker Line
+        today_line = self.scene.addLine(today_x, 0, today_x, total_height)
+        today_line.setPen(QPen(QColor(colors.get("today_marker_color", "#E95420")), 2, Qt.DashLine))
+
+        # 6. Render Live Current Time Line
+        now = datetime.now()
+        minute_offset = (now.hour * 60 + now.minute) / 1440.0
+        cur_time_x = today_x + (minute_offset * (self.columns[0].width if self.columns else 60.0))
+        self.current_time_line_item = self.scene.addLine(cur_time_x, 0, cur_time_x, total_height)
+        self.current_time_line_item.setPen(QPen(QColor(colors.get("current_time_marker_color", "#EF4444")), 2))
+
+        if not filtered_tasks:
+            text = self.scene.addText("📊 No tasks to display in Gantt view.")
+            text.setDefaultTextColor(QColor(colors.get("text_color", "#9CA3AF")))
+            text.setFont(QFont("Inter", 12))
+            text.setPos(50, 80)
+            return
+
+        # 7. Render Task Bars mapped to Timescale Engine X coordinates
+        visible_start = self.columns[0].start_date
+        visible_end = self.columns[-1].end_date
+
+        for idx, task in enumerate(filtered_tasks):
+            p_date_str = task.planned_date or today.strftime("%Y-%m-%d")
+            try:
+                p_start = datetime.strptime(p_date_str, "%Y-%m-%d").date()
+            except Exception:
+                p_start = today
+
+            # Calculate duration span
+            est_days = max(1, int(task.estimated_duration / 480)) if task.estimated_duration > 0 else 1
+            p_end = p_start + timedelta(days=est_days - 1)
+
+            # Range intersection check
+            if not TimescaleEngine.intersects_visible_range(p_start, p_end, visible_start, visible_end):
+                continue
+
+            col_x_start = TimescaleEngine.date_to_x(p_start, self.columns)
+            col_x_end = TimescaleEngine.date_to_x(p_end + timedelta(days=1), self.columns)
+            bar_width = max(24.0, col_x_end - col_x_start)
+
+            # Convert to col index equivalent for item rendering
+            start_col_index = max(0, int(col_x_start / self.columns[0].width))
+            dur_cols = max(1.0, bar_width / self.columns[0].width)
+
+            timing_status = TimingStatus.COMPLETED_ON_TIME
+            if self.delay_engine:
+                timing_status, _, _ = self.delay_engine.analyze_task_timing(task)
+
+            proj_name = self.projects_map.get(task.project_id, "Inbox")
+            item = GanttTaskItem(
+                task, row=idx, col_start=start_col_index, duration_cols=dur_cols,
+                col_width=self.columns[0].width, color_profile=colors, timing_status=timing_status,
+                project_name=proj_name, row_height=self.row_height, show_actual_bars=self.show_actual_bars
+            )
+            item.setPos(col_x_start, self.header_height + idx * self.row_height)
+            self.scene.addItem(item)

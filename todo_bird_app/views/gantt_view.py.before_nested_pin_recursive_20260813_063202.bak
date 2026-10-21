@@ -1,0 +1,364 @@
+import logging
+import json
+from datetime import date
+from PySide6.QtWidgets import (
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QCheckBox, QFrame, QFileDialog, QMessageBox
+)
+from PySide6.QtCore import Qt, QTimer, QCoreApplication
+from PySide6.QtGui import QPixmap, QImage, QPainter
+
+from todo_bird_app.views.base_view import BaseView
+from todo_bird_app.controllers.task_controller import TaskController
+from todo_bird_app.models.task import Task, TaskPriority, TaskStatus
+from todo_bird_app.controllers.delay_engine import DelayEngine, TimingStatus
+from todo_bird_app.gantt.gantt_chart import GanttChartWidget
+from todo_bird_app.gantt.gantt_theme import GanttColorProfile
+from todo_bird_app.gantt.timescale_engine import ZoomLevel
+from todo_bird_app.widgets.task_dialog import TaskDialog
+from todo_bird_app.widgets.justification_dialog import DelayJustificationDialog
+from todo_bird_app.voice.appreciation import AppreciationSystem
+from todo_bird_app.voice.voice_engine import VoiceEngine
+
+logger = logging.getLogger(__name__)
+
+class GanttView(BaseView):
+    """
+    Enhanced Gantt View with Multi-Year TimescaleEngine, timeline navigation (Prev/Next/Today),
+    Gantt theme modes, Plan vs Actual legends, and image export.
+    """
+    def __init__(self, db_manager, settings_manager, parent=None):
+        super().__init__(db_manager, settings_manager, title="Gantt Timeline", subtitle="Interactive timeline & Plan vs Actual comparison", parent=parent)
+        self.task_controller = TaskController(db_manager)
+        self.task_controller.tasks_changed.connect(self.refresh_data)
+
+        self.delay_engine = DelayEngine(settings_manager)
+        self.voice_engine = VoiceEngine(settings_manager)
+        self.appreciation_system = AppreciationSystem(settings_manager, self.voice_engine)
+
+        self.color_profile = GanttColorProfile()
+        self._load_gantt_profile()
+
+        self._init_ui()
+        self.refresh_data()
+
+    def _load_gantt_profile(self):
+        mode = self.settings_manager.get("gantt_theme_mode", "follow_app")
+        custom_colors = self.settings_manager.get("gantt_custom_colors", {})
+        self.color_profile = GanttColorProfile(mode=mode, colors=custom_colors)
+
+    def _init_ui(self):
+        # 1. Primary Toolbar Frame
+        toolbar = QFrame()
+        toolbar.setObjectName("CardWidget")
+        tb_layout = QHBoxLayout(toolbar)
+        tb_layout.setContentsMargins(12, 8, 12, 8)
+        tb_layout.setSpacing(8)
+
+        # Zoom Selector (Daily, Weekly, Monthly, Yearly, Multi-Year)
+        tb_layout.addWidget(QLabel("Zoom:"))
+        self.zoom_combo = QComboBox()
+        self.zoom_combo.addItems(["Hourly", "Daily", "Weekly", "Monthly", "Yearly", "Multi-Year"])
+        self.zoom_combo.setCurrentText("Daily")
+        self.zoom_combo.currentTextChanged.connect(self.on_zoom_changed)
+        tb_layout.addWidget(self.zoom_combo)
+
+        # Period Navigation Buttons
+        self.prev_btn = QPushButton("◀ Prev")
+        self.prev_btn.setToolTip("Navigate to previous period")
+        self.prev_btn.clicked.connect(lambda: self.navigate_period(-1))
+        tb_layout.addWidget(self.prev_btn)
+
+        self.today_btn = QPushButton("📅 Today")
+        self.today_btn.setToolTip("Center the Gantt timeline on today")
+        self.today_btn.setAccessibleName("Go to today")
+        self.today_btn.clicked.connect(self.go_to_today)
+        tb_layout.addWidget(self.today_btn)
+
+        self.next_btn = QPushButton("Next ▶")
+        self.next_btn.setToolTip("Navigate to next period")
+        self.next_btn.clicked.connect(lambda: self.navigate_period(1))
+        tb_layout.addWidget(self.next_btn)
+
+        # Gantt Theme Mode
+        tb_layout.addWidget(QLabel("Theme:"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Follow App", "Light", "Dark", "High Contrast", "Custom"])
+        mode_text = self.color_profile.mode.replace("_", " ").title()
+        self.theme_combo.setCurrentText(mode_text)
+        self.theme_combo.currentTextChanged.connect(self.on_gantt_theme_changed)
+        tb_layout.addWidget(self.theme_combo)
+
+        # Refresh Action Button
+        self.refresh_btn = QPushButton("🔄 Refresh")
+        self.refresh_btn.setToolTip("Reload tasks from database and refresh timeline")
+        self.refresh_btn.setAccessibleName("Refresh timeline")
+        self.refresh_btn.clicked.connect(self.trigger_refresh)
+        tb_layout.addWidget(self.refresh_btn)
+
+        export_btn = QPushButton("💾 Export")
+        export_btn.clicked.connect(self.export_chart_image)
+        tb_layout.addWidget(export_btn)
+
+        tb_layout.addStretch()
+
+        # Toggles
+        self.cb_actual = QCheckBox("Actual Bars")
+        self.cb_actual.setChecked(True)
+        self.cb_actual.toggled.connect(self.on_filter_changed)
+        tb_layout.addWidget(self.cb_actual)
+
+        self.cb_completed = QCheckBox("Completed")
+        self.cb_completed.setChecked(True)
+        self.cb_completed.toggled.connect(self.on_filter_changed)
+        tb_layout.addWidget(self.cb_completed)
+
+        self.main_layout.addWidget(toolbar)
+
+        # Action Feedback Status Banner
+        self.status_banner = QLabel("")
+        self.status_banner.setStyleSheet("font-size: 12px; font-weight: 600; color: #10B981; padding: 2px 12px;")
+        self.status_banner.setVisible(False)
+        self.main_layout.addWidget(self.status_banner)
+
+        # 2. Status Color Legend Bar
+        legend_frame = QFrame()
+        legend_frame.setObjectName("CardWidget")
+        l_layout = QHBoxLayout(legend_frame)
+        l_layout.setContentsMargins(12, 4, 12, 4)
+        l_layout.setSpacing(12)
+
+        l_items = [
+            ("■ Planned", "#3584E4"),
+            ("■ Early (-)", "#065F46"),
+            ("■ On Time", "#10B981"),
+            ("■ Slight Delay", "#F59E0B"),
+            ("■ Mod Delay", "#F97316"),
+            ("■ Severe Delay", "#EF4444"),
+            ("■ Very Severe", "#991B1B"),
+            ("♦ Milestone", "#E95420"),
+        ]
+
+        for text, col in l_items:
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f"color: {col}; font-weight: 600; font-size: 11px;")
+            l_layout.addWidget(lbl)
+
+        l_layout.addStretch()
+        self.main_layout.addWidget(legend_frame)
+
+        # 3. Gantt Graphics Engine Canvas Widget
+        self.gantt_chart = GanttChartWidget(self.settings_manager, self)
+        self.gantt_chart.task_action_requested.connect(self.on_gantt_task_action)
+        self.main_layout.addWidget(self.gantt_chart, 1)
+
+        # Apply color profile
+        app_theme = self.settings_manager.get("theme", "dark")
+        self.gantt_chart.set_color_profile(self.color_profile, app_theme)
+
+    def on_zoom_changed(self, zoom_text: str):
+        self.gantt_chart.set_zoom_mode(zoom_text)
+        self.show_feedback_message(f"Zoom level changed to: {zoom_text}")
+
+    def navigate_period(self, step: int):
+        self.gantt_chart.navigate_period(step)
+        self.show_feedback_message(f"Navigated { 'forward' if step > 0 else 'backward' } in timeline")
+
+    def on_gantt_theme_changed(self, text: str):
+        mode = text.lower().replace(" ", "_")
+        self.color_profile.mode = mode
+        self.settings_manager.set("gantt_theme_mode", mode)
+        app_theme = self.settings_manager.get("theme", "dark")
+        self.gantt_chart.set_color_profile(self.color_profile, app_theme)
+
+    def on_filter_changed(self):
+        self.gantt_chart.set_filters(
+            show_actual=self.cb_actual.isChecked(),
+            show_completed=self.cb_completed.isChecked()
+        )
+
+    def go_to_today(self):
+        self.gantt_chart.auto_center_today()
+        today_str = date.today().strftime("%d %B %Y")
+        self.show_feedback_message(f"Showing today — {today_str}")
+
+    def trigger_refresh(self):
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("⏳ Refreshing...")
+        QCoreApplication.processEvents()
+
+        QTimer.singleShot(400, self._complete_refresh)
+
+    def _complete_refresh(self):
+        count = self.refresh_data()
+        self.refresh_btn.setText("🔄 Refresh")
+        self.refresh_btn.setEnabled(True)
+        self.show_feedback_message(f"Gantt refreshed — {count} tasks loaded")
+
+    def show_feedback_message(self, text: str):
+        self.status_banner.setText(text)
+        self.status_banner.setVisible(True)
+        QTimer.singleShot(3000, lambda: self.status_banner.setVisible(False))
+
+    def export_chart_image(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Gantt Chart Image", "gantt_timeline.png", "PNG Images (*.png)")
+        if not file_path:
+            return
+
+        rect = self.gantt_chart.scene.sceneRect()
+        image = QImage(int(rect.width()), int(rect.height()), QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+
+        painter = QPainter(image)
+        self.gantt_chart.scene.render(painter)
+        painter.end()
+
+        image.save(file_path)
+        QMessageBox.information(self, "Export Successful", f"Gantt timeline saved to:\n{file_path}")
+
+    def refresh_data(self) -> int:
+        all_tasks = self.task_controller.get_all_tasks()
+        gantt_items = []
+
+        def priority_from_value(value):
+            try:
+                return TaskPriority(value or "Medium")
+            except Exception:
+                return TaskPriority.MEDIUM
+
+        def append_subtasks(nodes, parent_task, depth=1):
+            for node in nodes:
+                if bool(node.get("show_in_gantt", 0)):
+                    completed = bool(node.get("is_completed", 0))
+                    nested_progress = int(node.get("progress") or 0)
+
+                    if completed or nested_progress >= 100:
+                        nested_status = TaskStatus.COMPLETED
+                        nested_progress = 100
+                    elif nested_progress > 0:
+                        nested_status = TaskStatus.IN_PROGRESS
+                    else:
+                        nested_status = TaskStatus.PLANNED
+
+                    nested = Task(
+                        # Negative synthetic ID prevents collision with real task IDs.
+                        id=-int(node["id"]),
+                        title=("    " * max(0, depth - 1)) + "↳ " + node.get("title", ""),
+                        project_id=parent_task.project_id,
+                        priority=priority_from_value(node.get("priority")),
+                        tags=["subtask"],
+                        category=parent_task.category,
+                        description=node.get("description", ""),
+                        planned_date=node.get("planned_date") or parent_task.planned_date,
+                        due_date=node.get("due_date") or parent_task.due_date,
+                        planned_start_time=(
+                            node.get("planned_start_time")
+                            or parent_task.planned_start_time
+                        ),
+                        planned_end_time=(
+                            node.get("planned_end_time")
+                            or parent_task.planned_end_time
+                        ),
+                        estimated_duration=(
+                            node.get("estimated_duration")
+                            or parent_task.estimated_duration
+                        ),
+                        progress=nested_progress,
+                        dependencies=(
+                            json.loads(node.get("dependencies") or "[]")
+                            if isinstance(node.get("dependencies"), str)
+                            else (node.get("dependencies") or [])
+                        ),
+                        status=nested_status,
+                        show_in_gantt=True,
+                    )
+
+                    # Metadata used only by Gantt presentation.
+                    nested.gantt_depth = depth
+                    nested.gantt_item_type = "subtask"
+                    nested.source_subtask_id = node["id"]
+                    nested.parent_task_id = parent_task.id
+
+                    gantt_items.append(nested)
+
+                append_subtasks(
+                    node.get("children", []),
+                    parent_task,
+                    depth + 1
+                )
+
+        for task in all_tasks:
+            if bool(getattr(task, "show_in_gantt", False)):
+                task.gantt_depth = 0
+                task.gantt_item_type = "task"
+                gantt_items.append(task)
+
+            if task.id is not None:
+                tree = self.db_manager.get_subtask_tree(task.id)
+                append_subtasks(tree, task, 1)
+
+        projects = {
+            p.id: p.name
+            for p in self.task_controller.get_all_projects()
+        }
+
+        self._load_gantt_profile()
+        app_theme = self.settings_manager.get("theme", "dark")
+        self.gantt_chart.set_color_profile(
+            self.color_profile,
+            app_theme
+        )
+        self.gantt_chart.set_tasks(gantt_items, projects)
+
+        return len(gantt_items)
+
+    def on_gantt_task_action(self, action: str, task_id: int):
+        task = self.task_controller.get_task(task_id)
+        if not task:
+            return
+
+        if action == "open":
+            projects = self.task_controller.get_all_projects()
+            dlg = TaskDialog(projects, task, db_manager=self.db_manager, parent=self)
+            if dlg.exec() == TaskDialog.Accepted:
+                self.task_controller.update_task(dlg.get_task())
+                self.refresh_data()
+        elif action == "complete":
+            timing_status, delay_mins, delay_pct = self.delay_engine.analyze_task_timing(task)
+            task.delay_minutes = delay_mins
+            task.delay_percentage = delay_pct
+
+            if self.delay_engine.requires_justification(timing_status):
+                jdlg = DelayJustificationDialog(task, delay_minutes=delay_mins, parent=self)
+                if jdlg.exec() == DelayJustificationDialog.Accepted:
+                    task.delay_reason = jdlg.selected_reason
+                    task.delay_notes = jdlg.notes
+                    task.delay_recorded_at = date.today().strftime("%Y-%m-%d %H:%M")
+
+            self.task_controller.toggle_task_complete(task_id)
+
+            is_must = (task.priority == TaskPriority.URGENT) or ("must_do" in task.tags)
+            msg = self.appreciation_system.get_appreciation(timing_status, is_must_do=is_must)
+            if msg:
+                QMessageBox.information(self, "Appreciation", msg)
+
+        elif action == "start":
+            task.status = TaskStatus.IN_PROGRESS
+            task.actual_start_time = date.today().strftime("%H:%M")
+            self.task_controller.update_task(task)
+        elif action == "pause":
+            task.status = TaskStatus.INBOX
+            if "paused" not in task.tags:
+                task.tags.append("paused")
+            self.task_controller.update_task(task)
+        elif action == "add_delay_reason":
+            timing_status, delay_mins, _ = self.delay_engine.analyze_task_timing(task)
+            jdlg = DelayJustificationDialog(task, delay_minutes=delay_mins, parent=self)
+            if jdlg.exec() == DelayJustificationDialog.Accepted:
+                task.delay_reason = jdlg.selected_reason
+                task.delay_notes = jdlg.notes
+                task.delay_recorded_at = date.today().strftime("%Y-%m-%d %H:%M")
+                self.task_controller.update_task(task)
+        elif action == "mark_milestone":
+            if "milestone" not in task.tags:
+                task.tags.append("milestone")
+            self.task_controller.update_task(task)

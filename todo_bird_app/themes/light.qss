@@ -1,0 +1,962 @@
+/* TODO BIRD - GNOME Adwaita Light Theme QSS */
+
+QMainWindow, QDialog, QMessageBox {
+    background-color: @bg_root;
+    color: @text_primary;
+}
+
+QWidget {
+    color: @text_primary;
+}
+
+QLabel, QGroupBox, QCheckBox, QRadioButton {
+    color: @TEXT_PRIMARY;
+}
+
+QLabel[heading="true"], QLabel[titleRole="true"], QLabel#HeaderTitle, QLabel#SectionTitle {
+    color: @HEADING_PRIMARY;
+}
+
+QLabel[secondary="true"], QLabel[muted="true"], QLabel#HeaderSubtitle {
+    color: @TEXT_SECONDARY;
+}
+
+QGroupBox::title {
+    color: @SECTION_HEADER_TEXT;
+    font-weight: 700;
+}
+
+QHeaderView::section {
+    background-color: @SURFACE_2;
+    color: @TABLE_HEADER_TEXT;
+    border: 1px solid @BORDER_NORMAL;
+    padding: @control_padding_vpx @control_padding_hpx;
+    font-weight: 600;
+}
+
+QAbstractItemView {
+    color: @TEXT_PRIMARY;
+    background-color: @SURFACE_1;
+    alternate-background-color: @SURFACE_2;
+    selection-background-color: @ACCENT;
+    selection-color: @TEXT_ON_ACCENT;
+}
+
+QMenu {
+    background-color: @SURFACE_1;
+    color: @TEXT_PRIMARY;
+    border: 1px solid @BORDER_NORMAL;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    background-color: transparent;
+    padding: 6px 24px 6px 12px;
+    border-radius: 6px;
+    margin: 1px 2px;
+    color: @TEXT_PRIMARY;
+}
+
+QMenu::item:selected {
+    background-color: @ACCENT;
+    color: @TEXT_ON_ACCENT;
+}
+
+QMenu::item:disabled {
+    color: @TEXT_DISABLED;
+    background-color: transparent;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: @BORDER_NORMAL;
+    margin: 4px 6px;
+}
+
+QTabBar::tab {
+    color: @TEXT_SECONDARY;
+    padding: 8px 16px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    color: @HEADING_PRIMARY;
+    border-bottom: 2px solid @accent_default;
+    font-weight: 600;
+}
+
+QTabBar::tab:hover:!selected {
+    color: @TEXT_PRIMARY;
+    background-color: @bg_card_hover;
+}
+
+/* Dialog & Message Box Label Styling */
+QDialog QLabel, QMessageBox QLabel, QLabel#qt_msgbox_label, QLabel#qt_msgbox_informativelabel {
+    color: @text_primary;
+    background-color: transparent;
+}
+
+/* Sidebar styling */
+#SidebarContainer {
+    background-color: @bg_sidebar;
+    border-right: 1px solid @border;
+}
+
+#SidebarItem {
+    background-color: transparent;
+    color: @SIDEBAR_TEXT;
+    border-radius: 8px;
+    padding: 10px 14px;
+}
+
+#SidebarItem:hover {
+    background-color: @bg_card_hover;
+    color: @text_primary;
+}
+
+#SidebarItem[selected="true"] {
+    background-color: @accent_default;
+    color: @SIDEBAR_SELECTED_TEXT;
+}
+
+/* Headerbar styling */
+#HeaderBar {
+    background-color: @bg_header;
+    border-bottom: 1px solid @border;
+    min-height: 48px;
+    padding: 0 16px;
+}
+
+#HeaderTitle {
+    color: @HEADING_PRIMARY;
+}
+
+#HeaderSubtitle {
+    color: @TEXT_SECONDARY;
+}
+
+/* Card Styling */
+#CardWidget {
+    background-color: @bg_card;
+    border-radius: 8px;
+    border: 1px solid @border;
+    padding: 12px;
+}
+
+#CardWidget:hover {
+    border: 1px solid @accent_default;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: @bg_card;
+    color: @text_primary;
+    border: 1px solid @border;
+    border-radius: 6px;
+    padding: @button_padding_vpx @button_padding_hpx;
+}
+
+QPushButton:hover {
+    background-color: @bg_card_hover;
+    border-color: @accent_default;
+}
+
+QPushButton:pressed {
+    background-color: @SURFACE_3;
+    border-color: @ACCENT_PRESSED;
+}
+
+QPushButton:disabled {
+    background-color: @bg_input;
+    color: @TEXT_DISABLED;
+    border-color: @border;
+}
+
+QPushButton#PrimaryButton {
+    background-color: @accent_default;
+    color: @TEXT_ON_ACCENT;
+    border: none;
+}
+
+QPushButton#PrimaryButton:hover {
+    background-color: @ACCENT_HOVER;
+}
+
+QPushButton#PrimaryButton:pressed {
+    background-color: @ACCENT_PRESSED;
+}
+
+QPushButton#PrimaryButton:disabled {
+    background-color: @bg_card_hover;
+    color: @TEXT_DISABLED;
+}
+
+QPushButton#DestructiveButton, QPushButton[destructive="true"] {
+    background-color: @DANGER;
+    color: @TEXT_ON_DANGER;
+    border: none;
+}
+
+QPushButton#DestructiveButton:hover, QPushButton[destructive="true"]:hover {
+    background-color: @DANGER_HOVER;
+}
+
+QPushButton#DestructiveButton:pressed, QPushButton[destructive="true"]:pressed {
+    background-color: @DANGER_HOVER;
+}
+
+QPushButton#DestructiveButton:disabled, QPushButton[destructive="true"]:disabled {
+    background-color: @bg_card_hover;
+    color: @TEXT_DISABLED;
+}
+
+QPushButton#CancelButton {
+    background-color: @bg_card;
+    color: @text_primary;
+    border: 1px solid @border;
+    border-radius: 6px;
+    padding: @button_padding_vpx @button_padding_hpx;
+}
+
+QPushButton#CancelButton:hover {
+    background-color: @bg_card_hover;
+    border-color: @accent_default;
+    color: @text_primary;
+}
+
+QPushButton#CancelButton:pressed {
+    background-color: @SURFACE_3;
+}
+
+/* Dialog Button Override */
+QDialog QPushButton, QMessageBox QPushButton {
+    min-width: 80px;
+}
+
+/* Inputs & Form Controls */
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: @bg_input;
+    border: 1px solid @border;
+    border-radius: 6px;
+    padding: @control_padding_vpx @control_padding_hpx;
+    color: @text_primary;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+    border: 1.5px solid @accent_default;
+}
+
+QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {
+    color: @TEXT_DISABLED;
+}
+
+/* ComboBox Dropdowns */
+QComboBox {
+    background-color: @bg_input;
+    border: 1px solid @border;
+    border-radius: 6px;
+    padding: @control_padding_vpx 28px @control_padding_vpx @control_padding_hpx;
+    color: @text_primary;
+    min-height: 28px;
+}
+
+QComboBox:hover {
+    border-color: @accent_default;
+}
+
+QComboBox:focus {
+    border: 1.5px solid @accent_default;
+}
+
+QComboBox:disabled {
+    background-color: @bg_card;
+    color: @text_secondary;
+    border-color: @border;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 28px;
+    border-left: none;
+    background: transparent;
+}
+
+QComboBox::down-arrow {
+    width: 0px;
+    height: 0px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid @text_secondary;
+    margin-right: 8px;
+}
+
+QComboBox::down-arrow:hover {
+    border-top-color: @accent_default;
+}
+
+QComboBox::down-arrow:disabled {
+    border-top-color: #94A3B8;
+}
+
+QComboBox QAbstractItemView {
+    background-color: @bg_card;
+    border: 1px solid @border;
+    border-radius: 8px;
+    padding: 4px;
+    color: @text_primary;
+    selection-background-color: @accent_default;
+    selection-color: @TEXT_ON_ACCENT;
+    outline: none;
+}
+
+/* CheckBoxes */
+QCheckBox {
+    spacing: 8px;
+    color: @text_primary;
+    outline: none;
+}
+
+QCheckBox:disabled {
+    color: @text_secondary;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1.5px solid @border;
+    background-color: @bg_input;
+}
+
+QCheckBox::indicator:hover {
+    border-color: @accent_default;
+    background-color: @bg_card_hover;
+}
+
+QCheckBox::indicator:focus {
+    border-color: @accent_default;
+}
+
+QCheckBox::indicator:checked {
+    background-color: @accent_default;
+    border-color: @accent_default;
+    image: url("@CHECKMARK_IMAGE");
+}
+
+QCheckBox::indicator:checked:hover {
+    background-color: @ACCENT_HOVER;
+    border-color: @ACCENT_HOVER;
+}
+
+QCheckBox::indicator:indeterminate {
+    background-color: @accent_default;
+    border-color: @accent_default;
+    image: url("@INDETERMINATE_IMAGE");
+}
+
+QCheckBox::indicator:disabled {
+    border-color: @border;
+    background-color: @bg_card;
+}
+
+QCheckBox::indicator:checked:disabled,
+QCheckBox::indicator:indeterminate:disabled {
+    background-color: @border;
+    border-color: @border;
+}
+
+/* Date & Time Edits */
+QDateEdit, QDateTimeEdit, QTimeEdit {
+    background-color: @bg_input;
+    border: 1px solid @border;
+    border-radius: 6px;
+    padding: @control_padding_vpx 26px @control_padding_vpx @control_padding_hpx;
+    color: @text_primary;
+    min-height: 28px;
+}
+
+QDateEdit:focus, QDateTimeEdit:focus, QTimeEdit:focus {
+    border: 1.5px solid @accent_default;
+}
+
+QDateEdit::drop-down, QDateTimeEdit::drop-down, QTimeEdit::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border-left: none;
+    background: transparent;
+}
+
+QDateEdit::down-arrow, QDateTimeEdit::down-arrow, QTimeEdit::down-arrow {
+    width: 0px;
+    height: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid @text_secondary;
+    margin-right: 6px;
+}
+
+/* SpinBoxes */
+QSpinBox, QDoubleSpinBox {
+    background-color: @bg_input;
+    border: 1px solid @border;
+    border-radius: 6px;
+    padding: @control_padding_vpx 24px @control_padding_vpx @control_padding_hpx;
+    color: @text_primary;
+    min-height: 28px;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1.5px solid @accent_default;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QTimeEdit::up-button, QDateEdit::up-button, QDateTimeEdit::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 18px;
+    border-left: 1px solid @border;
+    border-bottom: 1px solid @border;
+    background: transparent;
+}
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow,
+QTimeEdit::up-arrow, QDateEdit::up-arrow, QDateTimeEdit::up-arrow {
+    width: 0px;
+    height: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 5px solid @text_secondary;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button,
+QTimeEdit::down-button, QDateEdit::down-button, QDateTimeEdit::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 18px;
+    border-left: 1px solid @border;
+    background: transparent;
+}
+
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow,
+QTimeEdit::down-arrow, QDateEdit::down-arrow, QDateTimeEdit::down-arrow {
+    width: 0px;
+    height: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid @text_secondary;
+}
+
+/* ToolButtons — same visual language as QPushButton (header actions etc.) */
+QToolButton {
+    background-color: @bg_card;
+    color: @text_primary;
+    border: 1px solid @border;
+    border-radius: 6px;
+    padding: @button_padding_vpx @button_padding_hpx;
+}
+
+QToolButton:hover {
+    background-color: @bg_card_hover;
+    border-color: @accent_default;
+}
+
+QToolButton:pressed, QToolButton:checked {
+    background-color: @SURFACE_3;
+    border-color: @ACCENT_PRESSED;
+}
+
+/* Sliders */
+QSlider {
+    min-height: 22px;
+    background: transparent;
+}
+
+QSlider::groove:horizontal {
+    border: none;
+    height: 5px;
+    border-radius: 2px;
+    background-color: @border;
+}
+
+QSlider::sub-page:horizontal {
+    border: none;
+    height: 5px;
+    border-radius: 2px;
+    background-color: @accent_default;
+}
+
+QSlider::handle:horizontal {
+    width: 16px;
+    height: 16px;
+    margin: -6px 0;
+    border-radius: 8px;
+    background-color: @bg_card;
+    border: 2px solid @accent_default;
+}
+
+QSlider::handle:horizontal:hover {
+    background-color: @accent_default;
+}
+
+QSlider::groove:vertical {
+    border: none;
+    width: 5px;
+    border-radius: 2px;
+    background-color: @border;
+}
+
+QSlider::add-page:vertical {
+    border: none;
+    width: 5px;
+    border-radius: 2px;
+    background-color: @accent_default;
+}
+
+QSlider::handle:vertical {
+    width: 16px;
+    height: 16px;
+    margin: 0 -6px;
+    border-radius: 8px;
+    background-color: @bg_card;
+    border: 2px solid @accent_default;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: @border;
+    min-height: 20px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: @text_secondary;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+/* Tooltip High-Contrast Readability */
+QToolTip {
+    background-color: @SURFACE_2;
+    color: @TEXT_PRIMARY;
+    border: 1px solid @BORDER_STRONG;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-weight: 500;
+}
+
+/* Calendar Popup High-Contrast Readability */
+QCalendarWidget {
+    background-color: @SURFACE_1;
+    color: @TEXT_PRIMARY;
+    border: 1px solid @BORDER_NORMAL;
+    border-radius: 8px;
+}
+
+QCalendarWidget QWidget#qt_datetimedit_calendar {
+    background-color: @SURFACE_1;
+}
+
+QCalendarWidget QToolButton {
+    background-color: transparent;
+    color: @TEXT_PRIMARY;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-weight: 600;
+}
+
+QCalendarWidget QToolButton:hover {
+    background-color: @SURFACE_2;
+    border-color: @BORDER_NORMAL;
+}
+
+QCalendarWidget QSpinBox {
+    background-color: @SURFACE_1;
+    color: @TEXT_PRIMARY;
+    border: 1px solid @BORDER_NORMAL;
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+QCalendarWidget QTableView {
+    background-color: @SURFACE_1;
+    color: @TEXT_PRIMARY;
+    selection-background-color: @ACCENT;
+    selection-color: @TEXT_ON_ACCENT;
+    outline: none;
+    gridline-color: @BORDER_SUBTLE;
+}
+
+QCalendarWidget QTableView::item:hover {
+    background-color: @SURFACE_2;
+    border-radius: 4px;
+}
+
+QCalendarWidget QTableView::item:selected {
+    background-color: @ACCENT;
+    color: @TEXT_ON_ACCENT;
+    border-radius: 4px;
+}
+
+
+/* Phase 1F.6.1 Adaptive Navigation */
+
+#SidebarContainer[navPosition="left"] {
+    border-right: 1px solid @border;
+    border-left: none;
+    border-top: none;
+    border-bottom: none;
+}
+
+#SidebarContainer[navPosition="right"] {
+    border-left: 1px solid @border;
+    border-right: none;
+    border-top: none;
+    border-bottom: none;
+}
+
+#SidebarContainer[navPosition="top"] {
+    border-bottom: 1px solid @border;
+    border-right: none;
+    border-left: none;
+    border-top: none;
+}
+
+#SidebarContainer[navPosition="bottom"] {
+    border-top: 1px solid @border;
+    border-right: none;
+    border-left: none;
+    border-bottom: none;
+}
+
+#SidebarContainer[navStyle="glass"] {
+    background-color: @bg_card;
+    border-radius: 14px;
+}
+
+#SidebarContainer[navStyle="minimal"] {
+    background-color: @bg_root;
+}
+
+#SidebarItem[navStyle="rail"] {
+    border-radius: 12px;
+    padding: 4px;
+}
+
+#SidebarItem[navStyle="slim"] {
+    border-radius: 7px;
+    padding: 5px 7px;
+}
+
+#SidebarItem[navStyle="tiles"] {
+    border: 1px solid @border;
+    border-radius: 12px;
+    padding: 8px 10px;
+    margin: 2px;
+}
+
+#SidebarItem[navStyle="glass"] {
+    border: 1px solid @border;
+    border-radius: 12px;
+    padding: 6px 9px;
+    margin: 1px;
+}
+
+#SidebarItem[navStyle="minimal"] {
+    border-radius: 5px;
+    padding: 3px 6px;
+}
+
+#NavigationCustomizeButton {
+    border-radius: 8px;
+    padding: 5px 8px;
+    min-width: 22px;
+}
+
+#NavigationSeparator {
+    background-color: @border;
+    max-height: 1px;
+}
+
+#SidebarBadge {
+    background-color: @accent_default;
+    color: @TEXT_ON_ACCENT;
+    border-radius: 9px;
+    padding: 1px 6px;
+    font-weight: 700;
+}
+
+
+/* Phase 1F.6.2.1 Navigation Delight */
+
+#NavigationMoreButton {
+    border-radius: 10px;
+    padding: 5px 10px;
+    min-width: 34px;
+    font-weight: 700;
+}
+
+#NavigationMoreButton:hover {
+    background-color: @bg_card_hover;
+    border-color: @accent_default;
+}
+
+/* Dashboard Visual Polish — Card System + Control Polish (M2) */
+/* NOTE: light/dark files share this identical block; per-theme values */
+/* resolve through the theme token table (bg_card is white in light).  */
+
+/* Dashboard card surface: opt-in via dashboardCard="true" property or */
+/* #DashboardCard id. Mirrors #CardWidget geometry on the spacing scale */
+/* (radius 12 / padding 16) with a softer hover affordance.             */
+QFrame[dashboardCard="true"], QWidget[dashboardCard="true"], #DashboardCard {
+    background-color: @bg_card;
+    border: 1px solid @BORDER_NORMAL;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+QFrame[dashboardCard="true"]:hover, QWidget[dashboardCard="true"]:hover, #DashboardCard:hover {
+    background-color: @bg_card_hover;
+    border: 1px solid @ACCENT;
+}
+
+/* Dashboard section headers + dividers */
+QLabel[sectionHeader="true"] {
+    color: @SECTION_HEADER_TEXT;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+/* KPI strip typography: large value + muted caption label */
+QLabel[kpiValue="true"] {
+    color: @HEADING_PRIMARY;
+    font-weight: 700;
+    font-size: 24px;
+}
+
+QLabel[kpiLabel="true"] {
+    color: @TEXT_SECONDARY;
+    font-weight: 500;
+    font-size: 11px;
+}
+
+/* Segmented dashboard controls (scope selector / horizon buttons): */
+/* opt-in via segmented="true"; checked = active pill in accent.      */
+QPushButton[segmented="true"] {
+    background-color: @bg_card;
+    color: @TEXT_SECONDARY;
+    border: 1px solid @BORDER_NORMAL;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-weight: 600;
+}
+
+QPushButton[segmented="true"]:hover {
+    background-color: @bg_card_hover;
+    color: @TEXT_PRIMARY;
+    border-color: @ACCENT;
+}
+
+QPushButton[segmented="true"]:checked {
+    background-color: @ACCENT;
+    color: @TEXT_ON_ACCENT;
+    border: none;
+}
+
+QPushButton[segmented="true"]:focus {
+    border: 1px solid @FOCUS_RING;
+}
+
+/* Keyboard focus visibility for standard buttons */
+QPushButton:focus {
+    border-color: @FOCUS_RING;
+}
+
+/* Horizontal scrollbar (lookahead timeline viewport): mirrors the */
+/* vertical scrollbar metrics with a slim 8px profile.              */
+QScrollBar:horizontal {
+    background: transparent;
+    height: 8px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background: @BORDER_NORMAL;
+    min-width: 20px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: @TEXT_SECONDARY;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+
+/* ============================ Settings View ============================ */
+
+QTabWidget#SettingsTabs::pane {
+    border: 0;
+    background: transparent;
+    top: 0px;
+}
+
+QTabWidget#SettingsTabs > QTabBar {
+    background: transparent;
+    qproperty-drawBase: 0;
+    margin-bottom: 12px;
+}
+
+QTabWidget#SettingsTabs QTabBar::tab {
+    min-height: 34px;
+    padding: 7px 18px;
+    margin-right: 8px;
+    border: 1px solid @border;
+    border-radius: 10px;
+    background-color: @bg_card;
+    color: @text_secondary;
+    font-weight: 600;
+}
+
+QTabWidget#SettingsTabs QTabBar::tab:selected {
+    border: 1.5px solid @accent_default;
+    background-color: @ACCENT_SUBTLE;
+    color: @text_primary;
+    font-weight: 700;
+}
+
+QTabWidget#SettingsTabs QTabBar::tab:hover:!selected {
+    background-color: @bg_card_hover;
+    color: @text_primary;
+    border-color: @BORDER_STRONG;
+}
+
+QFrame#SettingsSubPanel {
+    border-radius: 10px;
+    border: 1px solid @border;
+    background-color: @SURFACE_2;
+}
+
+QFrame#ThemePreviewTile {
+    border-radius: 10px;
+    border: 1px solid @border;
+    background-color: @SURFACE_2;
+}
+
+QFrame#LiveThemePreviewCard {
+    background-color: @SURFACE_2;
+    border: 1px solid @border;
+    border-radius: 12px;
+}
+
+QFrame#PreviewSampleCard {
+    background-color: @bg_root;
+    border: 1px solid @border;
+    border-radius: 8px;
+}
+
+QFrame#CardWidget[settingsHighlighted="true"] {
+    border: 1.5px solid @accent_default;
+    background-color: @ACCENT_SUBTLE;
+}
+
+QLabel#SettingsHelperText {
+    color: @text_secondary;
+}
+
+QLabel#SettingsViewTitle {
+    color: @heading_primary;
+    letter-spacing: -0.5px;
+}
+
+QLineEdit#SettingsSearchInput {
+    background-color: @bg_input;
+    border: 1px solid @border;
+    border-radius: 18px;
+    padding: 4px 14px;
+    color: @text_primary;
+}
+
+QLineEdit#SettingsSearchInput:focus {
+    border-color: @accent_default;
+}
+
+/* ===================== Task windows polish (Sept 2026) ===================== */
+
+/* Document-mode tab pane in the task dialog floats on the dialog surface */
+QTabWidget#TaskDialogTabs::pane {
+    border: none;
+    top: 0px;
+}
+
+/* Group boxes inside dialogs render as flat cards with a masked title */
+QDialog QGroupBox {
+    background-color: @bg_card;
+    border: 1px solid @border;
+    border-radius: 10px;
+    margin-top: 1.2em;
+    padding: 6px 10px 8px 10px;
+    font-weight: 600;
+}
+
+QDialog QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0 4px;
+    background-color: @bg_root;
+    color: @SECTION_HEADER_TEXT;
+    font-weight: 700;
+}
+
+/* Breakdown + dependency trees: calmer tables with breathing room */
+QTreeWidget#TaskBreakdownTree,
+QTreeWidget#TaskDependencyTree {
+    border: 1px solid @border;
+    border-radius: 8px;
+    padding: 2px;
+}
+
+QTreeWidget#TaskBreakdownTree::item,
+QTreeWidget#TaskDependencyTree::item {
+    min-height: 28px;
+}
+
+QTreeWidget#TaskBreakdownTree::item:hover,
+QTreeWidget#TaskDependencyTree::item:hover {
+    background-color: @bg_card_hover;
+}
+
+/* Accent-outlined quick-add button in the breakdown toolbar */
+QPushButton#TaskBreakdownAddButton {
+    min-width: 56px;
+    color: @accent_default;
+    border: 1px solid @accent_default;
+    background-color: transparent;
+    font-weight: 600;
+}
+
+QPushButton#TaskBreakdownAddButton:hover {
+    background-color: @ACCENT;
+    color: @TEXT_ON_ACCENT;
+}
+
+QPushButton#TaskBreakdownAddButton:pressed {
+    background-color: @accent_blue;
+    color: @TEXT_ON_ACCENT;
+}

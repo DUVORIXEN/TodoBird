@@ -1,0 +1,68 @@
+app-id: io.github.duvorixen.TodoBird
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+command: todo-bird
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --socket=pulseaudio
+  - --share=network
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - '*.a'
+  - '*.la'
+
+modules:
+  - name: krb5
+    subdir: src
+    build-options:
+      cflags: -std=gnu17 -Wno-error=incompatible-pointer-types
+    config-opts:
+      - --disable-static
+      - --disable-rpath
+    sources:
+      - type: archive
+        url: https://kerberos.org/dist/krb5/1.21/krb5-1.21.3.tar.gz
+        sha256: b7a4cd5ead67fb08b980b21abd150ff7217e85ea320c9ed0c6dadd304840ad35
+
+  - name: todo-bird
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      # Install python dependencies and application from pyproject.toml
+      - pip3 install --prefix=/app .
+
+      # Desktop launcher, Metainfo, and Application Icons
+      - install -Dm644 flatpak/io.github.duvorixen.TodoBird.desktop /app/share/applications/io.github.duvorixen.TodoBird.desktop
+      - install -Dm644 flatpak/io.github.duvorixen.TodoBird.metainfo.xml /app/share/metainfo/io.github.duvorixen.TodoBird.metainfo.xml
+      - install -Dm644 flatpak/io.github.duvorixen.TodoBird.png /app/share/icons/hicolor/512x512/apps/io.github.duvorixen.TodoBird.png
+
+      # Copy bundled assets and voice models
+      - mkdir -p /app/share/todo-bird
+      - cp -r assets voice /app/share/todo-bird/
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - .git
+          - venv
+          - .venv
+          - flatpak/build-dir
+          - flatpak/.flatpak-builder
+          - '*.snap'
+          - '*.deb'
+          - '*.db*'
+          - todo_bird_app/data
+          - todo_bird_app/config
+          - todo_bird_app/logs

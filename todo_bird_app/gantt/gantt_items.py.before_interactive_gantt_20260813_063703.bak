@@ -1,0 +1,341 @@
+from PySide6.QtWidgets import (
+    QGraphicsItemGroup, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsPolygonItem, QGraphicsItem
+)
+from PySide6.QtGui import QBrush, QPen, QColor, QPolygonF, QFont
+from PySide6.QtCore import QRectF, QPointF, Qt
+
+from todo_bird_app.models.task import Task, TaskStatus, TaskPriority
+from todo_bird_app.controllers.delay_engine import TimingStatus
+
+class GanttTaskItem(QGraphicsItemGroup):
+    """
+    Graphics item representing a task on the Gantt timeline.
+    Displays dynamic status colors, dual Plan vs Actual bars, and rich tooltips.
+    """
+    def __init__(
+        self,
+        task: Task,
+        row: int,
+        col_start: float,
+        duration_cols: float,
+        col_width: int,
+        color_profile: dict,
+        timing_status: TimingStatus = TimingStatus.COMPLETED_ON_TIME,
+        project_name: str = "Inbox",
+        row_height: int = 40,
+        show_actual_bars: bool = True,
+        parent=None
+    ):
+        super().__init__(parent)
+        self.task = task
+        self.row = row
+        self.col_start = col_start
+        self.duration_cols = max(duration_cols, 0.5)
+        self.col_width = col_width
+        self.color_profile = color_profile
+        self.timing_status = timing_status
+        self.project_name = project_name
+        self.row_height = row_height
+        self.show_actual_bars = show_actual_bars
+
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.ItemIsMovable, False)
+        self.setAcceptHoverEvents(True)
+
+        self._render_item()
+        self._set_rich_tooltip()
+
+    def _get_status_color(self) -> str:
+        cp = self.color_profile
+        if self.task.status == TaskStatus.CANCELLED:
+            return cp.get("cancelled_color", "#6B7280")
+        if self.task.status == TaskStatus.INBOX and "paused" in self.task.tags:
+            return cp.get("paused_color", "#8B5CF6")
+
+        status_map = {
+            TimingStatus.COMPLETED_BEFORE_TIME: cp.get("completed_early_color", "#065F46"),
+            TimingStatus.COMPLETED_ON_TIME: cp.get("completed_ontime_color", "#10B981"),
+            TimingStatus.SLIGHT_DELAY: cp.get("slight_delay_color", "#F59E0B"),
+            TimingStatus.MODERATE_DELAY: cp.get("moderate_delay_color", "#F97316"),
+            TimingStatus.SEVERE_DELAY: cp.get("severe_delay_color", "#EF4444"),
+            TimingStatus.VERY_SEVERE_DELAY: cp.get("very_severe_delay_color", "#991B1B"),
+        }
+        return status_map.get(self.timing_status, cp.get("actual_color", "#10B981"))
+
+    def _render_item(self):
+        cp = self.color_profile
+        x = 0.0
+        y = 6.0
+        w = max(self.duration_cols * self.col_width, 36.0)
+        h = self.row_height - 12
+
+        is_critical = (self.task.priority == TaskPriority.URGENT) or ("critical" in self.task.tags)
+        is_milestone = (self.duration_cols <= 0.5) or ("milestone" in self.task.tags)
+
+        border_pen = QPen(QColor(cp.get("critical_color", "#DC2626")), 2) if is_critical else QPen(Qt.NoPen)
+
+        # 1. Milestone Diamond Rendering
+        if is_milestone:
+            poly = QPolygonF([
+                QPointF(x + w / 2, y),
+                QPointF(x + w, y + h / 2),
+                QPointF(x + w / 2, y + h),
+                QPointF(x, y + h / 2),
+            ])
+            diamond = QGraphicsPolygonItem(poly)
+            diamond.setBrush(QBrush(QColor(cp.get("milestone_color", "#E95420"))))
+            diamond.setPen(QPen(QColor("#FFFFFF"), 1))
+            self.addToGroup(diamond)
+        else:
+            # 2. Dual Bar Rendering (Plan vs Actual)
+            execution_statuses = {
+                TaskStatus.IN_PROGRESS,
+                TaskStatus.BLOCKED,
+                TaskStatus.COMPLETED,
+                TaskStatus.DELAYED,
+            }
+            show_execution_lane = (
+                self.show_actual_bars
+                and self.task.status in execution_statuses
+            )
+            half_h = (h - 2) / 2 if show_execution_lane else h
+
+            # Top Bar: Planned Timeline
+            planned_bar = QGraphicsRectItem(x, y, w, half_h)
+            planned_bar.setBrush(QBrush(QColor(cp.get("planned_color", "#3584E4"))))
+            planned_bar.setPen(border_pen)
+            self.addToGroup(planned_bar)
+
+            # Bottom Bar: Actual Execution Timeline
+            #
+            # IMPORTANT:
+            # A planned task must never look as though work has actually
+            # happened. Actual execution is shown only after the workflow
+            # status says the task has started / completed / become delayed.
+            execution_statuses = {
+                TaskStatus.IN_PROGRESS,
+                TaskStatus.BLOCKED,
+                TaskStatus.COMPLETED,
+                TaskStatus.DELAYED,
+            }
+
+            has_actual_execution = (
+                self.show_actual_bars
+                and self.task.status in execution_statuses
+            )
+
+            if has_actual_execution:
+                if self.task.status == TaskStatus.COMPLETED:
+                    actual_w = w
+                else:
+                    progress = max(0, min(int(self.task.progress or 0), 100))
+                    actual_w = w * (progress / 100.0)
+
+                # In-progress work gets the neutral Actual color.
+                # Timing-performance colors are reserved for completed/delayed
+                # work where delay assessment is meaningful.
+                if self.task.status == TaskStatus.IN_PROGRESS:
+                    act_color = cp.get("actual_color", "#10B981")
+                elif self.task.status == TaskStatus.BLOCKED:
+                    act_color = cp.get("paused_color", "#8B5CF6")
+                else:
+                    act_color = self._get_status_color()
+
+                actual_bg = QGraphicsRectItem(
+                    x,
+                    y + half_h + 2,
+                    w,
+                    half_h
+                )
+                actual_bg.setBrush(
+                    QBrush(QColor(255, 255, 255, 20))
+                )
+                actual_bg.setPen(Qt.NoPen)
+                self.addToGroup(actual_bg)
+
+                if actual_w > 0:
+                    actual_bar = QGraphicsRectItem(
+                        x,
+                        y + half_h + 2,
+                        actual_w,
+                        half_h
+                    )
+                    actual_bar.setBrush(QBrush(QColor(act_color)))
+                    actual_bar.setPen(Qt.NoPen)
+                    self.addToGroup(actual_bar)
+
+        # Premium Program-Management Status Label
+        status_visuals = {
+            TaskStatus.INBOX: ("○", "NOT STARTED"),
+            TaskStatus.PLANNED: ("🗓", "PLANNED"),
+            TaskStatus.IN_PROGRESS: ("▶", "IN PROGRESS"),
+            TaskStatus.BLOCKED: ("⛔", "BLOCKED"),
+            TaskStatus.DELAYED: ("⚠", "DELAYED"),
+            TaskStatus.MOVED: ("↪", "MOVED"),
+            TaskStatus.COMPLETED: ("✓", "COMPLETED"),
+            TaskStatus.CANCELLED: ("✕", "CANCELLED"),
+        }
+
+        status_icon, status_text = status_visuals.get(
+            self.task.status,
+            ("○", str(getattr(self.task.status, "value", self.task.status)).upper())
+        )
+
+        item_type = getattr(self.task, "gantt_item_type", "task")
+        depth = int(getattr(self.task, "gantt_depth", 0) or 0)
+
+        if item_type == "task":
+            hierarchy_icon = "📌"
+            display_title = self.task.title
+        else:
+            hierarchy_icon = "↳"
+            clean_title = self.task.title.replace("↳", "").strip()
+            display_title = ("   " * max(0, depth - 1)) + clean_title
+
+        # -------------------------------------------------
+        # Premium hierarchy-aware title
+        # -------------------------------------------------
+        title_text = f"{hierarchy_icon} {display_title}"
+        title_item = QGraphicsSimpleTextItem(title_text)
+
+        title_font = QFont("Inter")
+        if item_type == "task":
+            title_font.setPointSize(10)
+            title_font.setBold(True)
+        else:
+            title_font.setPointSize(9)
+            title_font.setBold(False)
+
+        title_item.setFont(title_font)
+
+        title_color = cp.get("text_color", "#F3F4F6")
+        if self.task.status == TaskStatus.CANCELLED:
+            title_color = cp.get("cancelled_color", "#6B7280")
+
+        title_item.setBrush(QBrush(QColor(title_color)))
+
+        hierarchy_indent = depth * 14 if item_type != "task" else 0
+        title_x = x + w + 10 + hierarchy_indent
+        title_item.setPos(title_x, y)
+
+        self.addToGroup(title_item)
+
+        # -------------------------------------------------
+        # Compact status pill
+        # -------------------------------------------------
+        status_colors = {
+            TaskStatus.INBOX: cp.get("cancelled_color", "#6B7280"),
+            TaskStatus.PLANNED: cp.get("planned_color", "#3584E4"),
+            TaskStatus.IN_PROGRESS: cp.get("actual_color", "#10B981"),
+            TaskStatus.BLOCKED: cp.get("paused_color", "#8B5CF6"),
+            TaskStatus.DELAYED: cp.get("slight_delay_color", "#F59E0B"),
+            TaskStatus.MOVED: cp.get("hovered_color", "#60A5FA"),
+            TaskStatus.COMPLETED: cp.get("completed_ontime_color", "#10B981"),
+            TaskStatus.CANCELLED: cp.get("cancelled_color", "#6B7280"),
+        }
+
+        status_label = QGraphicsSimpleTextItem(
+            f"{status_icon} {status_text}"
+        )
+        status_font = QFont("Inter", 8)
+        status_font.setBold(True)
+        status_label.setFont(status_font)
+        status_label.setBrush(QBrush(QColor("#FFFFFF")))
+
+        status_rect = status_label.boundingRect()
+        status_x = title_x + title_item.boundingRect().width() + 10
+        status_y = y + 1
+
+        status_bg = QGraphicsRectItem(
+            status_x,
+            status_y,
+            status_rect.width() + 12,
+            status_rect.height() + 4,
+        )
+        status_bg.setBrush(
+            QBrush(
+                QColor(
+                    status_colors.get(
+                        self.task.status,
+                        cp.get("planned_color", "#3584E4")
+                    )
+                )
+            )
+        )
+        status_bg.setPen(Qt.NoPen)
+
+        status_label.setPos(
+            status_x + 6,
+            status_y + 2
+        )
+
+        self.addToGroup(status_bg)
+        self.addToGroup(status_label)
+
+        # -------------------------------------------------
+        # Separate progress badge
+        # -------------------------------------------------
+        progress_value = max(
+            0,
+            min(int(self.task.progress or 0), 100)
+        )
+
+        progress_label = QGraphicsSimpleTextItem(
+            f"{progress_value}%"
+        )
+        progress_font = QFont("Inter", 8)
+        progress_font.setBold(True)
+        progress_label.setFont(progress_font)
+        progress_label.setBrush(
+            QBrush(
+                QColor(
+                    cp.get("text_color", "#F3F4F6")
+                )
+            )
+        )
+
+        progress_x = (
+            status_x
+            + status_rect.width()
+            + 24
+        )
+        progress_label.setPos(
+            progress_x,
+            status_y + 2
+        )
+
+        self.addToGroup(progress_label)
+
+    def _set_rich_tooltip(self):
+        t = self.task
+        depth = int(getattr(t, "gantt_depth", 0) or 0)
+        item_type = getattr(t, "gantt_item_type", "task")
+
+        if item_type == "task":
+            hierarchy_text = "Main Task"
+            hierarchy_icon = "📌"
+        else:
+            hierarchy_text = (
+                "Subtask"
+                if depth == 1
+                else f"Level {depth} Subtask"
+            )
+            hierarchy_icon = "↳"
+
+        tooltip = (
+            f"{hierarchy_icon} <b>{t.title}</b><br/>"
+            f"🧭 Level: {hierarchy_text}<br/>"
+            f"📁 Project: {self.project_name}<br/>"
+            f"🔥 Priority: {t.priority.value}<br/>"
+            f"📅 Planned Date: {t.planned_date or 'N/A'}<br/>"
+            f"🎯 Due Date: {t.due_date or 'N/A'}<br/>"
+            f"⏱️ Planned: {t.planned_start_time or 'N/A'} - "
+            f"{t.planned_end_time or 'N/A'} ({t.estimated_duration}m)<br/>"
+            f"⌛ Actual: {t.actual_start_time or 'N/A'} - "
+            f"{t.actual_end_time or 'N/A'} ({t.actual_duration}m)<br/>"
+            f"⚠️ Delay: {t.delay_minutes}m "
+            f"({t.delay_percentage:.1f}%)<br/>"
+            f"💡 Reason: {t.delay_reason or 'None'}<br/>"
+            f"📊 Status: {t.status.value} ({t.progress}%)"
+        )
+        self.setToolTip(tooltip)

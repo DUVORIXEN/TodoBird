@@ -1,0 +1,1265 @@
+import json
+from datetime import date, datetime
+from typing import List, Optional
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QTextEdit,
+    QComboBox, QDateEdit, QTimeEdit, QSpinBox, QSlider, QPushButton,
+    QFormLayout, QGroupBox, QScrollArea, QWidget, QCheckBox,
+    QTreeWidget, QTreeWidgetItem, QMessageBox
+)
+from PySide6.QtCore import Qt, QDate, QTime
+
+from todo_bird_app.models.task import Task, TaskPriority, TaskStatus, TaskCategory
+from todo_bird_app.models.project import Project
+
+class TaskDialog(QDialog):
+    """
+    Planify-style Task Creation and Editing Dialog.
+    """
+    def __init__(
+        self,
+        projects: List[Project],
+        task: Optional[Task] = None,
+        db_manager=None,
+        parent=None
+    ):
+        super().__init__(parent)
+        self.projects = projects
+        self.task = task or Task()
+        self.db_manager = db_manager
+
+        self.subtasks_data = []
+        if self.db_manager is not None and self.task.id is not None:
+            self.subtasks_data = self.db_manager.get_subtask_tree(self.task.id)
+
+        self.setWindowTitle("Edit Task" if task and task.id else "New Task")
+        self.resize(560, 680)
+        self._init_ui()
+
+    def _init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(16)
+
+        # Header Title
+        dlg_title = QLabel("Edit Task" if self.task.id else "Create New Task")
+        dlg_title.setStyleSheet("font-size: 18px; font-weight: 700;")
+        main_layout.addWidget(dlg_title)
+
+        # Scrollable form container
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        form_layout = QFormLayout(scroll_content)
+        form_layout.setSpacing(12)
+
+        # 1. Task Title
+        self.title_input = QLineEdit(self.task.title)
+        self.title_input.setPlaceholderText("Task title...")
+        form_layout.addRow("Task Name *", self.title_input)
+
+        # 2. Project Selector
+        self.project_combo = QComboBox()
+        for proj in self.projects:
+            self.project_combo.addItem(f"📁 {proj.name}", proj.id)
+        if self.task.project_id:
+            idx = self.project_combo.findData(self.task.project_id)
+            if idx >= 0:
+                self.project_combo.setCurrentIndex(idx)
+        form_layout.addRow("Project", self.project_combo)
+
+        # 3. Priority & Category
+        prio_cat_layout = QHBoxLayout()
+        self.prio_combo = QComboBox()
+        for p in TaskPriority:
+            self.prio_combo.addItem(p.value, p)
+        idx = self.prio_combo.findData(self.task.priority)
+        if idx >= 0:
+            self.prio_combo.setCurrentIndex(idx)
+
+        self.cat_combo = QComboBox()
+        for c in TaskCategory:
+            self.cat_combo.addItem(c.value, c)
+        idx = self.cat_combo.findData(self.task.category)
+        if idx >= 0:
+            self.cat_combo.setCurrentIndex(idx)
+
+        prio_cat_layout.addWidget(self.prio_combo)
+        prio_cat_layout.addWidget(self.cat_combo)
+        form_layout.addRow("Priority / Category", prio_cat_layout)
+
+        # 4. Dates (Planned Date & Due Date)
+        dates_layout = QHBoxLayout()
+        self.planned_date_edit = QDateEdit()
+        self.planned_date_edit.setCalendarPopup(True)
+        self.planned_date_edit.setDate(
+            QDate.fromString(self.task.planned_date, "yyyy-MM-dd") if self.task.planned_date else QDate.currentDate()
+        )
+
+        self.due_date_edit = QDateEdit()
+        self.due_date_edit.setCalendarPopup(True)
+        self.due_date_edit.setDate(
+            QDate.fromString(self.task.due_date, "yyyy-MM-dd") if self.task.due_date else QDate.currentDate()
+        )
+
+        dates_layout.addWidget(QLabel("Planned:"))
+        dates_layout.addWidget(self.planned_date_edit)
+        dates_layout.addWidget(QLabel("Due:"))
+        dates_layout.addWidget(self.due_date_edit)
+        form_layout.addRow("Schedule Dates", dates_layout)
+
+        # 5. Planned Times & Duration
+        times_layout = QHBoxLayout()
+        self.start_time_edit = QTimeEdit()
+        self.start_time_edit.setDisplayFormat("HH:mm")
+        if self.task.planned_start_time:
+            self.start_time_edit.setTime(QTime.fromString(self.task.planned_start_time, "HH:mm"))
+
+        self.end_time_edit = QTimeEdit()
+        self.end_time_edit.setDisplayFormat("HH:mm")
+        if self.task.planned_end_time:
+            self.end_time_edit.setTime(QTime.fromString(self.task.planned_end_time, "HH:mm"))
+
+        self.duration_spin = QSpinBox()
+        self.duration_spin.setRange(0, 1440)
+        self.duration_spin.setSuffix(" mins")
+        self.duration_spin.setValue(self.task.estimated_duration)
+        self.duration_spin.setReadOnly(True)
+        self.duration_spin.setButtonSymbols(QSpinBox.NoButtons)
+        self.duration_spin.setToolTip(
+            "Automatically calculated from Start Time and End Time."
+        )
+
+        def update_main_duration():
+            start = self.start_time_edit.time()
+            end = self.end_time_edit.time()
+
+            start_minutes = start.hour() * 60 + start.minute()
+            end_minutes = end.hour() * 60 + end.minute()
+
+            duration = end_minutes - start_minutes
+
+            # End time earlier than start means the task crosses midnight.
+            if duration < 0:
+                duration += 24 * 60
+
+            self.duration_spin.setValue(duration)
+
+        self.start_time_edit.timeChanged.connect(
+            lambda _time: update_main_duration()
+        )
+        self.end_time_edit.timeChanged.connect(
+            lambda _time: update_main_duration()
+        )
+
+        # Recalculate existing scheduled tasks so stored duration stays correct.
+        if self.task.planned_start_time and self.task.planned_end_time:
+            update_main_duration()
+
+        times_layout.addWidget(self.start_time_edit)
+        times_layout.addWidget(QLabel("to"))
+        times_layout.addWidget(self.end_time_edit)
+        times_layout.addWidget(QLabel("Duration:"))
+        times_layout.addWidget(self.duration_spin)
+        form_layout.addRow("⏱ Schedule Time", times_layout)
+
+        # 6. Description
+        self.desc_input = QTextEdit()
+        self.desc_input.setPlaceholderText("Detailed task description...")
+        self.desc_input.setMaximumHeight(80)
+        self.desc_input.setText(self.task.description)
+        form_layout.addRow("Description", self.desc_input)
+
+        # 7. Hierarchical Subtasks
+        subtasks_group = QGroupBox("Subtasks / Sub-subtasks")
+        subtasks_layout = QVBoxLayout(subtasks_group)
+
+        self.subtask_tree = QTreeWidget()
+        self.subtask_tree.setHeaderLabels(["Task hierarchy / Done", "📅 Date", "⏱ Time", "📈 Gantt", "🗑 Remove"])
+        self.subtask_tree.setMinimumHeight(180)
+        self.subtask_tree.setAlternatingRowColors(True)
+
+        def add_existing(parent_item, subtask):
+            item = QTreeWidgetItem([subtask.get("title", "")])
+            item.setFlags(
+                item.flags()
+                | Qt.ItemIsUserCheckable
+                | Qt.ItemIsEditable
+                | Qt.ItemIsSelectable
+                | Qt.ItemIsEnabled
+            )
+            item.setCheckState(
+                0,
+                Qt.Checked if subtask.get("is_completed") else Qt.Unchecked
+            )
+            item.setText(1, subtask.get("planned_date") or "—")
+
+            start_time = subtask.get("planned_start_time") or ""
+            end_time = subtask.get("planned_end_time") or ""
+            time_text = (
+                f"{start_time}–{end_time}"
+                if start_time or end_time
+                else "—"
+            )
+            item.setText(2, time_text)
+
+            item.setCheckState(
+                3,
+                Qt.Checked if subtask.get("show_in_gantt") else Qt.Unchecked
+            )
+            item.setCheckState(4, Qt.Unchecked)
+            item.setData(0, Qt.UserRole, subtask.get("id"))
+            item.setData(
+                0,
+                Qt.UserRole + 1,
+                {
+                    "description": subtask.get("description", ""),
+                    "planned_date": subtask.get("planned_date"),
+                    "due_date": subtask.get("due_date"),
+                    "planned_start_time": subtask.get("planned_start_time"),
+                    "planned_end_time": subtask.get("planned_end_time"),
+                    "estimated_duration": int(subtask.get("estimated_duration") or 0),
+                    "priority": subtask.get("priority") or "Medium",
+                    "progress": int(subtask.get("progress") or 0),
+                }
+            )
+
+            if parent_item is None:
+                self.subtask_tree.addTopLevelItem(item)
+            else:
+                parent_item.addChild(item)
+
+            for child in subtask.get("children", []):
+                add_existing(item, child)
+
+            item.setExpanded(True)
+
+        for subtask in self.subtasks_data:
+            add_existing(None, subtask)
+
+        subtasks_layout.addWidget(self.subtask_tree)
+
+        subtask_add_row = QHBoxLayout()
+
+        self.subtask_input = QLineEdit()
+        self.subtask_input.setPlaceholderText("Add a task under this main task...")
+
+        add_subtask_btn = QPushButton("➕ Add Subtask")
+        add_subtask_btn.clicked.connect(self.add_subtask_item)
+
+        add_child_btn = QPushButton("↳ Add Child")
+        add_child_btn.setToolTip(
+            "Add a sub-subtask below the currently selected subtask."
+        )
+        add_child_btn.clicked.connect(self.add_child_subtask_item)
+
+        edit_subtask_btn = QPushButton("✏ Edit Details")
+        edit_subtask_btn.setToolTip(
+            "Edit schedule, description, priority and progress for the selected hierarchy item."
+        )
+        edit_subtask_btn.clicked.connect(self.edit_selected_subtask_details)
+
+        remove_subtask_btn = QPushButton("🗑 Remove Checked")
+        remove_subtask_btn.setToolTip(
+            "Remove only rows checked in the Remove column. "
+            "Changes are committed only when Save Task is pressed."
+        )
+        remove_subtask_btn.clicked.connect(self.remove_selected_subtask)
+
+        subtask_add_row.addWidget(self.subtask_input, 1)
+        subtask_add_row.addWidget(add_subtask_btn)
+        subtask_add_row.addWidget(add_child_btn)
+        subtask_add_row.addWidget(edit_subtask_btn)
+        subtask_add_row.addWidget(remove_subtask_btn)
+
+        subtasks_layout.addLayout(subtask_add_row)
+        form_layout.addRow(subtasks_group)
+
+        # 8. Program Management / Execution Workflow
+        workflow_group = QGroupBox("Program Management / Execution")
+        workflow_layout = QVBoxLayout(workflow_group)
+
+        status_row = QHBoxLayout()
+
+        self.status_combo = QComboBox()
+        status_options = [
+            ("○ Not Started", TaskStatus.INBOX),
+            ("🗓 Planned", TaskStatus.PLANNED),
+            ("▶ In Progress", TaskStatus.IN_PROGRESS),
+            ("⛔ Blocked", TaskStatus.BLOCKED),
+            ("⚠ Delayed", TaskStatus.DELAYED),
+            ("↪ Moved", TaskStatus.MOVED),
+            ("✓ Completed", TaskStatus.COMPLETED),
+            ("✕ Cancelled", TaskStatus.CANCELLED),
+        ]
+
+        for label, status in status_options:
+            self.status_combo.addItem(label, status)
+
+        status_index = self.status_combo.findData(self.task.status)
+        if status_index >= 0:
+            self.status_combo.setCurrentIndex(status_index)
+
+        self.task_done_checkbox = QCheckBox("✓ Task Done")
+        self.task_done_checkbox.setChecked(
+            self.task.status == TaskStatus.COMPLETED
+        )
+        self.task_done_checkbox.setToolTip(
+            "Marks this task completed and sets progress to 100%."
+        )
+
+        status_row.addWidget(QLabel("Status:"))
+        status_row.addWidget(self.status_combo, 1)
+        status_row.addWidget(self.task_done_checkbox)
+        workflow_layout.addLayout(status_row)
+
+        # Dependency selector
+        dependency_label = QLabel(
+            "🔗 Dependencies — tasks that must be completed before this task can finish"
+        )
+        dependency_label.setWordWrap(True)
+        workflow_layout.addWidget(dependency_label)
+
+        self.dependency_tree = QTreeWidget()
+        self.dependency_tree.setHeaderLabels(
+            ["Dependency Task", "Current Status"]
+        )
+        self.dependency_tree.setMinimumHeight(120)
+        self.dependency_tree.setAlternatingRowColors(True)
+
+        current_dependencies = set(self.task.dependencies or [])
+
+        if self.db_manager is not None:
+            try:
+                dependency_rows = self.db_manager.get_all_tasks()
+            except Exception:
+                dependency_rows = []
+
+            for row in dependency_rows:
+                task_id = row.get("id")
+
+                # A task cannot depend on itself.
+                if (
+                    task_id is None
+                    or (
+                        self.task.id is not None
+                        and task_id == self.task.id
+                    )
+                ):
+                    continue
+
+                raw_status = row.get("status", "Inbox")
+                visible_status = (
+                    "Not Started"
+                    if raw_status == "Inbox"
+                    else raw_status
+                )
+
+                dep_item = QTreeWidgetItem(
+                    [
+                        row.get("title", f"Task {task_id}"),
+                        visible_status,
+                    ]
+                )
+                dep_item.setFlags(
+                    dep_item.flags()
+                    | Qt.ItemIsUserCheckable
+                    | Qt.ItemIsEnabled
+                    | Qt.ItemIsSelectable
+                )
+                dep_item.setCheckState(
+                    0,
+                    Qt.Checked
+                    if task_id in current_dependencies
+                    else Qt.Unchecked
+                )
+                dep_item.setData(0, Qt.UserRole, task_id)
+                dep_item.setData(
+                    1,
+                    Qt.UserRole,
+                    raw_status
+                )
+
+                self.dependency_tree.addTopLevelItem(dep_item)
+
+        self.dependency_tree.resizeColumnToContents(1)
+        workflow_layout.addWidget(self.dependency_tree)
+
+        # Blocker management
+        blocker_group = QGroupBox("⛔ Blocker / Delay Management")
+        blocker_form = QFormLayout(blocker_group)
+
+        self.blocker_category_combo = QComboBox()
+        self.blocker_category_combo.addItems(
+            [
+                "None",
+                "Dependency",
+                "Decision / Approval",
+                "Resource / Manpower",
+                "Technical Issue",
+                "Material / Parts",
+                "Budget / Commercial",
+                "Customer / Stakeholder",
+                "External Agency",
+                "Information / Input",
+                "Other",
+            ]
+        )
+
+        existing_category = self.task.delay_category or "None"
+        idx = self.blocker_category_combo.findText(existing_category)
+        if idx < 0 and existing_category:
+            self.blocker_category_combo.addItem(existing_category)
+            idx = self.blocker_category_combo.findText(existing_category)
+        if idx >= 0:
+            self.blocker_category_combo.setCurrentIndex(idx)
+
+        self.blocker_reason_input = QLineEdit(
+            self.task.delay_reason or ""
+        )
+        self.blocker_reason_input.setPlaceholderText(
+            "What is stopping or delaying this task?"
+        )
+
+        self.blocker_notes_input = QTextEdit()
+        self.blocker_notes_input.setMaximumHeight(70)
+        self.blocker_notes_input.setPlainText(
+            self.task.delay_notes or ""
+        )
+        self.blocker_notes_input.setPlaceholderText(
+            "Owner, action required, expected resolution, decision needed..."
+        )
+
+        blocker_form.addRow(
+            "Category",
+            self.blocker_category_combo
+        )
+        blocker_form.addRow(
+            "Reason",
+            self.blocker_reason_input
+        )
+        blocker_form.addRow(
+            "Recovery / Notes",
+            self.blocker_notes_input
+        )
+
+        workflow_layout.addWidget(blocker_group)
+
+        self.workflow_hint = QLabel()
+        self.workflow_hint.setWordWrap(True)
+        self.workflow_hint.setStyleSheet(
+            "font-size: 11px; opacity: 0.85;"
+        )
+        workflow_layout.addWidget(self.workflow_hint)
+
+        def update_workflow_ui():
+            status = self.status_combo.currentData()
+
+            is_completed = status == TaskStatus.COMPLETED
+            is_blocked_or_delayed = status in (
+                TaskStatus.BLOCKED,
+                TaskStatus.DELAYED,
+            )
+
+            self.task_done_checkbox.blockSignals(True)
+            self.task_done_checkbox.setChecked(is_completed)
+            self.task_done_checkbox.blockSignals(False)
+
+            self.blocker_category_combo.setEnabled(
+                is_blocked_or_delayed
+            )
+            self.blocker_reason_input.setEnabled(
+                is_blocked_or_delayed
+            )
+            self.blocker_notes_input.setEnabled(
+                is_blocked_or_delayed
+            )
+
+            if status == TaskStatus.INBOX:
+                hint = (
+                    "○ Not Started: work has not begun. "
+                    "Only the planned schedule should appear in Gantt."
+                )
+            elif status == TaskStatus.PLANNED:
+                hint = (
+                    "🗓 Planned: task is scheduled but execution "
+                    "has not started."
+                )
+            elif status == TaskStatus.IN_PROGRESS:
+                hint = (
+                    "▶ In Progress: progress represents real execution. "
+                    "Gantt will show Planned + Actual progress."
+                )
+            elif status == TaskStatus.BLOCKED:
+                hint = (
+                    "⛔ Blocked: identify exactly what prevents progress. "
+                    "A blocker reason will be required when saving."
+                )
+            elif status == TaskStatus.DELAYED:
+                hint = (
+                    "⚠ Delayed: work can continue, but it is behind plan. "
+                    "Record the reason and recovery action."
+                )
+            elif status == TaskStatus.COMPLETED:
+                hint = (
+                    "✓ Completed: Todo Bird will enforce 100% progress "
+                    "when this task is saved."
+                )
+            elif status == TaskStatus.CANCELLED:
+                hint = (
+                    "✕ Cancelled: task is intentionally stopped."
+                )
+            else:
+                hint = (
+                    "↪ Moved: task has been rescheduled or shifted."
+                )
+
+            self.workflow_hint.setText(hint)
+
+        def task_done_changed(checked):
+            if checked:
+                idx = self.status_combo.findData(
+                    TaskStatus.COMPLETED
+                )
+                if idx >= 0:
+                    self.status_combo.setCurrentIndex(idx)
+            elif self.status_combo.currentData() == TaskStatus.COMPLETED:
+                idx = self.status_combo.findData(
+                    TaskStatus.IN_PROGRESS
+                    if self.task.progress > 0
+                    else TaskStatus.PLANNED
+                )
+                if idx >= 0:
+                    self.status_combo.setCurrentIndex(idx)
+
+        self.status_combo.currentIndexChanged.connect(
+            lambda _idx: update_workflow_ui()
+        )
+        self.task_done_checkbox.toggled.connect(
+            task_done_changed
+        )
+
+        update_workflow_ui()
+
+        form_layout.addRow(workflow_group)
+
+        # 8. Progress — precise numeric entry + synchronized slider
+        progress_layout = QHBoxLayout()
+
+        self.progress_slider = QSlider(Qt.Horizontal)
+        self.progress_slider.setRange(0, 100)
+        self.progress_slider.setValue(int(self.task.progress or 0))
+
+        self.progress_spin = QSpinBox()
+        self.progress_spin.setRange(0, 100)
+        self.progress_spin.setSuffix("%")
+        self.progress_spin.setValue(int(self.task.progress or 0))
+        self.progress_spin.setMinimumWidth(90)
+        self.progress_spin.setToolTip(
+            "Enter exact task progress from 0% to 100%."
+        )
+
+        self.progress_slider.valueChanged.connect(
+            self.progress_spin.setValue
+        )
+        self.progress_spin.valueChanged.connect(
+            self.progress_slider.setValue
+        )
+
+        progress_layout.addWidget(self.progress_slider, 1)
+        progress_layout.addWidget(self.progress_spin)
+
+        form_layout.addRow("📊 Progress", progress_layout)
+
+        # 8. Tags & Recurring
+        self.tags_input = QLineEdit(", ".join(self.task.tags))
+        self.tags_input.setPlaceholderText("e.g. urgent, backend, design")
+        form_layout.addRow("Tags", self.tags_input)
+
+        self.recurring_combo = QComboBox()
+        self.recurring_combo.addItems(["None", "Daily", "Weekly", "Monthly"])
+        if self.task.recurring:
+            idx = self.recurring_combo.findText(self.task.recurring.capitalize())
+            if idx >= 0:
+                self.recurring_combo.setCurrentIndex(idx)
+        form_layout.addRow("Recurring", self.recurring_combo)
+
+        self.show_in_gantt_checkbox = QCheckBox("Show this task in Gantt")
+        self.show_in_gantt_checkbox.setChecked(bool(self.task.show_in_gantt))
+        self.show_in_gantt_checkbox.setToolTip(
+            "Enable only for tasks that should appear on the Gantt timeline."
+        )
+        form_layout.addRow("Gantt", self.show_in_gantt_checkbox)
+
+        self.startup_reminder_checkbox = QCheckBox(
+            "Show this task when computer starts"
+        )
+        self.startup_reminder_checkbox.setChecked(
+            bool(self.task.startup_reminder)
+        )
+        self.startup_reminder_checkbox.setToolTip(
+            "Show a persistent Task Name + Description reminder when Todo Bird starts."
+        )
+        form_layout.addRow("Startup Reminder", self.startup_reminder_checkbox)
+
+        # Persistent colored pinning
+        pin_row = QHBoxLayout()
+
+        self.pin_checkbox = QCheckBox("📌 Pin this task")
+        self.pin_checkbox.setChecked(bool(getattr(self.task, "is_pinned", False)))
+        self.pin_checkbox.setToolTip(
+            "Keep this task pinned for fast visual priority access."
+        )
+
+        self.pin_color_combo = QComboBox()
+        pin_colors = [
+            ("🟠 Orange", "#E95420"),
+            ("🔵 Blue", "#3584E4"),
+            ("🟣 Purple", "#8B5CF6"),
+            ("🟢 Green", "#10B981"),
+            ("🟡 Amber", "#F59E0B"),
+            ("🔴 Red", "#DC2626"),
+            ("⚫ Graphite", "#374151"),
+        ]
+
+        for label, color in pin_colors:
+            self.pin_color_combo.addItem(label, color)
+
+        current_pin_color = getattr(self.task, "pin_color", "#E95420") or "#E95420"
+        pin_index = self.pin_color_combo.findData(current_pin_color)
+        if pin_index >= 0:
+            self.pin_color_combo.setCurrentIndex(pin_index)
+
+        self.pin_color_combo.setEnabled(self.pin_checkbox.isChecked())
+        self.pin_checkbox.toggled.connect(self.pin_color_combo.setEnabled)
+
+        pin_row.addWidget(self.pin_checkbox)
+        pin_row.addWidget(QLabel("Color:"))
+        pin_row.addWidget(self.pin_color_combo)
+        pin_row.addStretch()
+
+        form_layout.addRow("Pin", pin_row)
+
+        scroll.setWidget(scroll_content)
+        main_layout.addWidget(scroll)
+
+        # Buttons Row
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+
+        save_btn = QPushButton("Save Task")
+        save_btn.setObjectName("PrimaryButton")
+        save_btn.clicked.connect(self.on_save)
+
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(save_btn)
+
+        main_layout.addLayout(btn_layout)
+
+    def _new_subtask_tree_item(self, title: str) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([title])
+        item.setFlags(
+            item.flags()
+            | Qt.ItemIsUserCheckable
+            | Qt.ItemIsEditable
+            | Qt.ItemIsSelectable
+            | Qt.ItemIsEnabled
+        )
+        item.setCheckState(0, Qt.Unchecked)
+
+        item.setText(
+            1,
+            self.task.planned_date or "—"
+        )
+
+        start_time = self.task.planned_start_time or ""
+        end_time = self.task.planned_end_time or ""
+        item.setText(
+            2,
+            f"{start_time}–{end_time}" if start_time or end_time else "—"
+        )
+
+        item.setCheckState(3, Qt.Unchecked)
+        item.setCheckState(4, Qt.Unchecked)
+        item.setData(0, Qt.UserRole, None)
+
+        item.setData(
+            0,
+            Qt.UserRole + 1,
+            {
+                "description": "",
+                "planned_date": self.task.planned_date,
+                "due_date": self.task.due_date,
+                "planned_start_time": self.task.planned_start_time,
+                "planned_end_time": self.task.planned_end_time,
+                "estimated_duration": int(self.task.estimated_duration or 0),
+                "priority": (
+                    self.task.priority.value
+                    if hasattr(self.task.priority, "value")
+                    else str(self.task.priority)
+                ),
+                "progress": 0,
+            }
+        )
+
+        return item
+
+    def add_subtask_item(self):
+        title = self.subtask_input.text().strip()
+        if not title:
+            self.subtask_input.setFocus()
+            return
+
+        item = self._new_subtask_tree_item(title)
+        self.subtask_tree.addTopLevelItem(item)
+        self.subtask_tree.setCurrentItem(item)
+        self.subtask_input.clear()
+
+    def add_child_subtask_item(self):
+        title = self.subtask_input.text().strip()
+        if not title:
+            self.subtask_input.setFocus()
+            return
+
+        parent_item = self.subtask_tree.currentItem()
+        if parent_item is None:
+            self.subtask_input.setFocus()
+            return
+
+        item = self._new_subtask_tree_item(title)
+        parent_item.addChild(item)
+        parent_item.setExpanded(True)
+        self.subtask_tree.setCurrentItem(item)
+        self.subtask_input.clear()
+
+    def edit_selected_subtask_details(self):
+        item = self.subtask_tree.currentItem()
+        if item is None:
+            return
+
+        metadata = item.data(0, Qt.UserRole + 1) or {}
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Edit Subtask Details")
+        dlg.resize(470, 520)
+
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+
+        title_edit = QLineEdit(item.text(0))
+        form.addRow("📌 Name", title_edit)
+
+        description_edit = QTextEdit()
+        description_edit.setMaximumHeight(90)
+        description_edit.setPlainText(
+            metadata.get("description", "")
+        )
+        form.addRow("📝 Description", description_edit)
+
+        planned_date_edit = QDateEdit()
+        planned_date_edit.setCalendarPopup(True)
+        planned_value = metadata.get("planned_date")
+        planned_date_edit.setDate(
+            QDate.fromString(planned_value, "yyyy-MM-dd")
+            if planned_value
+            else QDate.currentDate()
+        )
+        form.addRow("📅 Planned Date", planned_date_edit)
+
+        due_date_edit = QDateEdit()
+        due_date_edit.setCalendarPopup(True)
+        due_value = metadata.get("due_date")
+        due_date_edit.setDate(
+            QDate.fromString(due_value, "yyyy-MM-dd")
+            if due_value
+            else planned_date_edit.date()
+        )
+        form.addRow("🎯 Due Date", due_date_edit)
+
+        start_time_edit = QTimeEdit()
+        start_time_edit.setDisplayFormat("HH:mm")
+        start_value = metadata.get("planned_start_time")
+        if start_value:
+            start_time_edit.setTime(
+                QTime.fromString(start_value, "HH:mm")
+            )
+        form.addRow("⏱ Start Time", start_time_edit)
+
+        end_time_edit = QTimeEdit()
+        end_time_edit.setDisplayFormat("HH:mm")
+        end_value = metadata.get("planned_end_time")
+        if end_value:
+            end_time_edit.setTime(
+                QTime.fromString(end_value, "HH:mm")
+            )
+        form.addRow("⏳ End Time", end_time_edit)
+
+        duration_spin = QSpinBox()
+        duration_spin.setRange(0, 1440)
+        duration_spin.setSuffix(" mins")
+        duration_spin.setValue(
+            int(metadata.get("estimated_duration") or 0)
+        )
+        duration_spin.setReadOnly(True)
+        duration_spin.setButtonSymbols(QSpinBox.NoButtons)
+        duration_spin.setToolTip(
+            "Automatically calculated from Start Time and End Time."
+        )
+
+        def update_nested_duration():
+            start = start_time_edit.time()
+            end = end_time_edit.time()
+
+            start_minutes = start.hour() * 60 + start.minute()
+            end_minutes = end.hour() * 60 + end.minute()
+
+            duration = end_minutes - start_minutes
+
+            # Support schedules crossing midnight.
+            if duration < 0:
+                duration += 24 * 60
+
+            duration_spin.setValue(duration)
+
+        start_time_edit.timeChanged.connect(
+            lambda _time: update_nested_duration()
+        )
+        end_time_edit.timeChanged.connect(
+            lambda _time: update_nested_duration()
+        )
+
+        if (
+            metadata.get("planned_start_time")
+            and metadata.get("planned_end_time")
+        ):
+            update_nested_duration()
+
+        form.addRow("🕒 Duration (Auto)", duration_spin)
+
+        priority_combo = QComboBox()
+        priority_combo.addItems([
+            "Low",
+            "Medium",
+            "High",
+            "Urgent",
+        ])
+        priority_combo.setCurrentText(
+            metadata.get("priority") or "Medium"
+        )
+        form.addRow("🔥 Priority", priority_combo)
+
+        progress_spin = QSpinBox()
+        progress_spin.setRange(0, 100)
+        progress_spin.setSuffix("%")
+
+        # Progress is the source of truth.
+        # Do not allow an old/stale Done checkbox to overwrite saved progress.
+        initial_progress = max(
+            0,
+            min(int(metadata.get("progress") or 0), 100)
+        )
+
+        progress_spin.setValue(initial_progress)
+
+        # Repair the visible Done state immediately from saved progress.
+        item.setCheckState(
+            0,
+            Qt.Checked if initial_progress >= 100 else Qt.Unchecked
+        )
+
+        def sync_done_from_progress(value):
+            item.setCheckState(
+                0,
+                Qt.Checked if value >= 100 else Qt.Unchecked
+            )
+
+        progress_spin.valueChanged.connect(sync_done_from_progress)
+
+        form.addRow("📊 Progress", progress_spin)
+
+        gantt_checkbox = QCheckBox(
+            "Show this hierarchy item in Gantt"
+        )
+        gantt_checkbox.setChecked(
+            item.checkState(3) == Qt.Checked
+        )
+        form.addRow("📈 Gantt", gantt_checkbox)
+
+        layout.addLayout(form)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        save_btn = QPushButton("💾 Save Details")
+        save_btn.setObjectName("PrimaryButton")
+
+        buttons.addWidget(cancel_btn)
+        buttons.addWidget(save_btn)
+        layout.addLayout(buttons)
+
+        cancel_btn.clicked.connect(dlg.reject)
+
+        def save_details():
+            title = title_edit.text().strip()
+            if not title:
+                title_edit.setFocus()
+                return
+
+            item.setText(0, title)
+
+            final_progress = progress_spin.value()
+
+            item.setCheckState(
+                0,
+                Qt.Checked
+                if final_progress >= 100
+                else Qt.Unchecked
+            )
+
+            planned_date_value = planned_date_edit.date().toString("yyyy-MM-dd")
+            start_time_value = start_time_edit.time().toString("HH:mm")
+            end_time_value = end_time_edit.time().toString("HH:mm")
+
+            item.setData(
+                0,
+                Qt.UserRole + 1,
+                {
+                    "description": description_edit.toPlainText().strip(),
+                    "planned_date": planned_date_value,
+                    "due_date": due_date_edit.date().toString("yyyy-MM-dd"),
+                    "planned_start_time": start_time_value,
+                    "planned_end_time": end_time_value,
+                    "estimated_duration": duration_spin.value(),
+                    "priority": priority_combo.currentText(),
+                    "progress": final_progress,
+                }
+            )
+
+            item.setText(1, planned_date_value)
+            item.setText(
+                2,
+                f"{start_time_value}–{end_time_value}"
+            )
+
+            item.setCheckState(
+                3,
+                Qt.Checked
+                if gantt_checkbox.isChecked()
+                else Qt.Unchecked
+            )
+
+            dlg.accept()
+
+        save_btn.clicked.connect(save_details)
+
+        dlg.exec()
+
+    def remove_selected_subtask(self):
+        def remove_checked_children(parent_item):
+            for index in range(parent_item.childCount() - 1, -1, -1):
+                child = parent_item.child(index)
+
+                remove_checked_children(child)
+
+                if child.checkState(4) == Qt.Checked:
+                    parent_item.takeChild(index)
+
+        for row in range(self.subtask_tree.topLevelItemCount() - 1, -1, -1):
+            item = self.subtask_tree.topLevelItem(row)
+
+            remove_checked_children(item)
+
+            if item.checkState(4) == Qt.Checked:
+                self.subtask_tree.takeTopLevelItem(row)
+
+    def _collect_subtask_tree(self):
+        def collect_item(item, position):
+            metadata = item.data(0, Qt.UserRole + 1) or {}
+
+            progress = max(
+                0,
+                min(int(metadata.get("progress") or 0), 100)
+            )
+            is_completed = progress >= 100
+
+            # Keep visible checkbox synchronized with persisted truth.
+            item.setCheckState(
+                0,
+                Qt.Checked if is_completed else Qt.Unchecked
+            )
+
+            data = {
+                "id": item.data(0, Qt.UserRole),
+                "title": item.text(0).strip(),
+                "description": metadata.get("description", ""),
+                "planned_date": metadata.get("planned_date"),
+                "due_date": metadata.get("due_date"),
+                "planned_start_time": metadata.get("planned_start_time"),
+                "planned_end_time": metadata.get("planned_end_time"),
+                "estimated_duration": int(
+                    metadata.get("estimated_duration") or 0
+                ),
+                "priority": metadata.get("priority") or "Medium",
+                "progress": progress,
+                "is_completed": is_completed,
+                "show_in_gantt": item.checkState(3) == Qt.Checked,
+                "position": position,
+                "children": [],
+            }
+
+            for child_index in range(item.childCount()):
+                child = item.child(child_index)
+                child_data = collect_item(child, child_index)
+                if child_data["title"]:
+                    data["children"].append(child_data)
+
+            return data
+
+        result = []
+
+        for row in range(self.subtask_tree.topLevelItemCount()):
+            item = self.subtask_tree.topLevelItem(row)
+            data = collect_item(item, row)
+
+            if data["title"]:
+                result.append(data)
+
+        return result
+
+    def on_save(self):
+        title = self.title_input.text().strip()
+        if not title:
+            self.title_input.setFocus()
+            return
+
+        self.task.title = title
+        self.task.project_id = self.project_combo.currentData()
+        self.task.priority = self.prio_combo.currentData()
+        self.task.category = self.cat_combo.currentData()
+        self.task.planned_date = self.planned_date_edit.date().toString("yyyy-MM-dd")
+        self.task.due_date = self.due_date_edit.date().toString("yyyy-MM-dd")
+        self.task.planned_start_time = self.start_time_edit.time().toString("HH:mm")
+        self.task.planned_end_time = self.end_time_edit.time().toString("HH:mm")
+        self.task.estimated_duration = self.duration_spin.value()
+        self.task.description = self.desc_input.toPlainText().strip()
+        self.task.progress = self.progress_spin.value()
+
+        tags_str = self.tags_input.text().strip()
+        self.task.tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
+
+        rec = self.recurring_combo.currentText()
+        self.task.recurring = rec.lower() if rec != "None" else None
+
+        self.task.show_in_gantt = self.show_in_gantt_checkbox.isChecked()
+        self.task.startup_reminder = self.startup_reminder_checkbox.isChecked()
+
+        self.task.is_pinned = self.pin_checkbox.isChecked()
+        self.task.pin_color = self.pin_color_combo.currentData() or "#E95420"
+
+        # Preserve existing ordering for now.
+        # Drag/reorder support will update pin_position later.
+        self.task.pin_position = int(
+            getattr(self.task, "pin_position", 0) or 0
+        )
+
+        # -------------------------------------------------
+        # Program-management workflow state
+        # -------------------------------------------------
+        selected_status = self.status_combo.currentData()
+        selected_dependencies = []
+        incomplete_dependencies = []
+
+        for row in range(self.dependency_tree.topLevelItemCount()):
+            dep_item = self.dependency_tree.topLevelItem(row)
+
+            if dep_item.checkState(0) != Qt.Checked:
+                continue
+
+            dep_id = dep_item.data(0, Qt.UserRole)
+            dep_status = dep_item.data(1, Qt.UserRole)
+            dep_title = dep_item.text(0)
+
+            if dep_id is not None:
+                selected_dependencies.append(int(dep_id))
+
+            if dep_status != TaskStatus.COMPLETED.value:
+                incomplete_dependencies.append(dep_title)
+
+        self.task.dependencies = selected_dependencies
+
+        # Progress between 1-99% means execution has actually started.
+        if (
+            selected_status in (TaskStatus.INBOX, TaskStatus.PLANNED)
+            and 0 < self.progress_spin.value() < 100
+        ):
+            selected_status = TaskStatus.IN_PROGRESS
+
+        # Completion is explicit. 100% progress by itself does NOT
+        # silently complete a task.
+        if selected_status == TaskStatus.COMPLETED:
+            if incomplete_dependencies:
+                QMessageBox.warning(
+                    self,
+                    "Cannot Complete Task",
+                    "This task still has unfinished dependencies:\n\n"
+                    + "\n".join(
+                        f"• {name}"
+                        for name in incomplete_dependencies
+                    )
+                    + "\n\nComplete or remove those dependencies first."
+                )
+                self.dependency_tree.setFocus()
+                return
+
+            self.task.progress = 100
+            self.progress_slider.setValue(100)
+
+            if not self.task.actual_start_time:
+                self.task.actual_start_time = datetime.now().strftime("%H:%M")
+
+            self.task.actual_end_time = datetime.now().strftime("%H:%M")
+
+        elif selected_status == TaskStatus.IN_PROGRESS:
+            if not self.task.actual_start_time:
+                self.task.actual_start_time = datetime.now().strftime("%H:%M")
+
+            # Respect the user's progress slider.
+            self.task.progress = self.progress_spin.value()
+
+        elif selected_status in (
+            TaskStatus.BLOCKED,
+            TaskStatus.DELAYED,
+        ):
+            blocker_category = self.blocker_category_combo.currentText().strip()
+            blocker_reason = self.blocker_reason_input.text().strip()
+
+            if blocker_category == "None":
+                QMessageBox.warning(
+                    self,
+                    "Blocker Category Required",
+                    "Please select what is blocking or delaying this task."
+                )
+                self.blocker_category_combo.setFocus()
+                return
+
+            if not blocker_reason:
+                QMessageBox.warning(
+                    self,
+                    "Blocker Reason Required",
+                    "Please record the reason this task is blocked or delayed."
+                )
+                self.blocker_reason_input.setFocus()
+                return
+
+            self.task.delay_category = blocker_category
+            self.task.delay_reason = blocker_reason
+            self.task.delay_notes = (
+                self.blocker_notes_input.toPlainText().strip()
+            )
+            self.task.delay_recorded_at = datetime.now().isoformat(
+                timespec="seconds"
+            )
+
+            self.task.progress = self.progress_spin.value()
+
+        else:
+            self.task.progress = self.progress_spin.value()
+
+        # Preserve entered blocker/recovery information even after the task
+        # later resumes or completes, so the latest issue remains traceable.
+        if selected_status not in (
+            TaskStatus.BLOCKED,
+            TaskStatus.DELAYED,
+        ):
+            category_text = self.blocker_category_combo.currentText().strip()
+            reason_text = self.blocker_reason_input.text().strip()
+            notes_text = self.blocker_notes_input.toPlainText().strip()
+
+            if category_text and category_text != "None":
+                self.task.delay_category = category_text
+            if reason_text:
+                self.task.delay_reason = reason_text
+            if notes_text:
+                self.task.delay_notes = notes_text
+
+        self.task.status = selected_status
+
+        self.pending_subtasks = self._collect_subtask_tree()
+
+        if self.task.id is not None and self.db_manager is not None:
+            existing_rows = self.db_manager.get_all_subtasks_flat(self.task.id)
+            existing_ids = {
+                row.get("id")
+                for row in existing_rows
+                if row.get("id") is not None
+            }
+
+            current_ids = set()
+
+            def collect_existing_ids(nodes):
+                for node in nodes:
+                    if node.get("id") is not None:
+                        current_ids.add(node["id"])
+                    collect_existing_ids(node.get("children", []))
+
+            collect_existing_ids(self.pending_subtasks)
+
+            # Delete removed branches only when Save Task is pressed.
+            for subtask_id in existing_ids - current_ids:
+                self.db_manager.delete_subtask(subtask_id)
+
+            def save_nodes(nodes, parent_subtask_id=None):
+                for position, subtask in enumerate(nodes):
+                    if subtask["id"] is None:
+                        subtask["id"] = self.db_manager.insert_subtask(
+                            task_id=self.task.id,
+                            title=subtask["title"],
+                            is_completed=subtask["is_completed"],
+                            position=position,
+                            parent_subtask_id=parent_subtask_id,
+                            description=subtask["description"],
+                            planned_date=subtask["planned_date"],
+                            due_date=subtask["due_date"],
+                            planned_start_time=subtask["planned_start_time"],
+                            planned_end_time=subtask["planned_end_time"],
+                            estimated_duration=subtask["estimated_duration"],
+                            priority=subtask["priority"],
+                            progress=subtask["progress"],
+                            show_in_gantt=subtask["show_in_gantt"],
+                        )
+                    else:
+                        self.db_manager.update_subtask(
+                            subtask_id=subtask["id"],
+                            title=subtask["title"],
+                            is_completed=subtask["is_completed"],
+                            position=position,
+                            parent_subtask_id=parent_subtask_id,
+                            description=subtask["description"],
+                            planned_date=subtask["planned_date"],
+                            due_date=subtask["due_date"],
+                            planned_start_time=subtask["planned_start_time"],
+                            planned_end_time=subtask["planned_end_time"],
+                            estimated_duration=subtask["estimated_duration"],
+                            priority=subtask["priority"],
+                            progress=subtask["progress"],
+                            show_in_gantt=subtask["show_in_gantt"],
+                        )
+
+                    save_nodes(
+                        subtask.get("children", []),
+                        subtask["id"]
+                    )
+
+            save_nodes(self.pending_subtasks)
+
+        self.accept()
+
+    def get_task(self) -> Task:
+        return self.task
+
+    def get_pending_subtasks(self):
+        return getattr(self, "pending_subtasks", [])

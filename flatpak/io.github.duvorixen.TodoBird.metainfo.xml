@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.duvorixen.TodoBird</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>TODO BIRD</name>
+  <summary>Offline Desktop Personal Assistant &amp; Task Manager</summary>
+  <description>
+    <p>
+      TODO BIRD is an offline-first desktop personal assistant, interactive Gantt scheduler,
+      and task manager designed for privacy, focus, and local data sovereignty.
+    </p>
+    <p>
+      Unlike web-based subscription tools, TODO BIRD runs 100% locally on your machine
+      with zero telemetry and zero cloud lock-in.
+    </p>
+    <ul>
+      <li>Interactive WBS and Gantt scheduling engine with visual dependencies</li>
+      <li>Comprehensive task and subtask status workflow</li>
+      <li>Local-first SQLite storage for complete privacy and data ownership</li>
+      <li>Avocet voice companion with local-time aware greetings</li>
+      <li>Dark and light modern neumorphic themes</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.duvorixen.TodoBird.desktop</launchable>
+  <url type="homepage">https://snapcraft.io/todo-bird</url>
+  <url type="help">https://snapcraft.io/todo-bird</url>
+  <categories>
+    <category>Utility</category>
+    <category>Office</category>
+    <category>ProjectManagement</category>
+  </categories>
+  <developer id="io.github.duvorixen">
+    <name>Duvorixen</name>
+  </developer>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2026-10-17">
+      <description>
+        <p>Initial stable release of Todo Bird for Linux desktop.</p>
+      </description>
+    </release>
+  </releases>
+</component>

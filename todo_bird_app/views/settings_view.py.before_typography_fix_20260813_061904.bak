@@ -1,0 +1,929 @@
+import shutil
+import logging
+from pathlib import Path
+from PySide6.QtWidgets import (
+    QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox, QPushButton,
+    QTimeEdit, QSpinBox, QSlider, QFrame, QFormLayout, QScrollArea,
+    QWidget, QMessageBox, QColorDialog, QPlainTextEdit
+)
+from PySide6.QtCore import Qt, QTime
+from PySide6.QtGui import QFontDatabase
+from PySide6.QtWidgets import QApplication
+
+from todo_bird_app.views.base_view import BaseView
+from todo_bird_app.gantt.gantt_theme import DEFAULT_GANTT_COLORS, GanttColorProfile
+from todo_bird_app.services.desktop_launcher import DesktopLauncherService
+from todo_bird_app.services.working_week import WorkingWeekService, WEEKDAY_NAMES
+
+logger = logging.getLogger(__name__)
+
+COLOR_KEYS = [
+    ("planned_color", "Planned Task Bar"),
+    ("actual_color", "Actual Task Bar"),
+    ("completed_early_color", "Completed Before Time"),
+    ("completed_ontime_color", "Completed On Time"),
+    ("slight_delay_color", "Slight Delay"),
+    ("moderate_delay_color", "Moderate Delay"),
+    ("severe_delay_color", "Severe Delay"),
+    ("cancelled_color", "Cancelled Task"),
+    ("paused_color", "Paused Task"),
+    ("milestone_color", "Milestone Marker"),
+    ("critical_color", "Critical Task Highlight"),
+    ("selected_color", "Selected Task Highlight"),
+    ("hovered_color", "Hovered Task Highlight"),
+]
+
+class SettingsView(BaseView):
+    """
+    Preferences & Settings View — Comprehensive controls for appearance, Gantt customization,
+    calendar working week, delay rules, appreciation, desktop integration, and backups.
+    """
+    def __init__(self, db_manager, settings_manager, parent=None):
+        super().__init__(db_manager, settings_manager, title="Preferences & Settings", subtitle="Theme, Voice, Gantt Customization, Working Week, and System Integration", parent=parent)
+        self.working_week_service = WorkingWeekService(settings_manager)
+        self.color_buttons = {}
+        self.custom_colors = dict(settings_manager.get("gantt_custom_colors", DEFAULT_GANTT_COLORS))
+        self.day_checkboxes = {}
+        self._init_ui()
+        self.refresh_data()
+
+    def _init_ui(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 8, 0, 8)
+        layout.setSpacing(16)
+
+        # 1. Main Appearance & Theme Card
+        theme_card = QFrame()
+        theme_card.setObjectName("CardWidget")
+        t_layout = QFormLayout(theme_card)
+        t_title = QLabel("🎨 Appearance & Application Theme")
+        t_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        t_layout.addRow(t_title)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Dark Mode", "Light Mode"])
+        self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
+        t_layout.addRow("Application Theme Mode", self.theme_combo)
+
+        self.accent_combo = QComboBox()
+        self.accent_combo.addItems(["Ubuntu Orange (#E95420)", "Adwaita Blue (#3584E4)", "Emerald Green (#10B981)", "Purple (#8B5CF6)"])
+        self.accent_combo.currentTextChanged.connect(self.on_accent_changed)
+        t_layout.addRow("Accent Color", self.accent_combo)
+
+        # -------------------------------------------------
+        # Application-wide typography
+        # -------------------------------------------------
+        self.font_family_combo = QComboBox()
+        self.font_family_combo.setEditable(False)
+        self.font_family_combo.setMaxVisibleItems(22)
+
+        installed_fonts = sorted(
+            QFontDatabase.families(),
+            key=lambda name: name.lower(),
+        )
+
+        self.font_family_combo.addItems(
+            installed_fonts
+        )
+
+        current_font = str(
+            self.settings_manager.get(
+                "ui_font_family",
+                QApplication.font().family(),
+            )
+        )
+
+        font_idx = self.font_family_combo.findText(
+            current_font
+        )
+        if font_idx >= 0:
+            self.font_family_combo.setCurrentIndex(
+                font_idx
+            )
+
+        self.font_family_combo.setToolTip(
+            "All font families installed on this computer. "
+            "The selected family is used across Todo Bird."
+        )
+        t_layout.addRow(
+            "Application Font",
+            self.font_family_combo,
+        )
+
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(8, 20)
+        self.font_size_spin.setSuffix(" pt")
+        self.font_size_spin.setValue(
+            int(
+                self.settings_manager.get(
+                    "ui_font_size",
+                    10,
+                )
+            )
+        )
+        self.font_size_spin.setToolTip(
+            "Base application font size. "
+            "Some specialized headings keep their own relative emphasis."
+        )
+        t_layout.addRow(
+            "Base Font Size",
+            self.font_size_spin,
+        )
+
+        self.font_weight_combo = QComboBox()
+        self.font_weight_combo.addItem(
+            "Normal",
+            "normal",
+        )
+        self.font_weight_combo.addItem(
+            "Medium",
+            "medium",
+        )
+        self.font_weight_combo.addItem(
+            "Semi Bold",
+            "semibold",
+        )
+
+        current_weight = str(
+            self.settings_manager.get(
+                "ui_font_weight",
+                "normal",
+            )
+        )
+        weight_idx = (
+            self.font_weight_combo.findData(
+                current_weight
+            )
+        )
+        if weight_idx >= 0:
+            self.font_weight_combo.setCurrentIndex(
+                weight_idx
+            )
+
+        t_layout.addRow(
+            "Default Font Weight",
+            self.font_weight_combo,
+        )
+
+        self.font_preview = QLabel(
+            "Todo Bird Preview — "
+            "Project • Task • Gantt • 23% • 📌"
+        )
+        self.font_preview.setMinimumHeight(38)
+        self.font_preview.setStyleSheet(
+            """
+            padding: 8px 10px;
+            border: 1px solid rgba(148,163,184,80);
+            border-radius: 7px;
+            """
+        )
+        t_layout.addRow(
+            "Font Preview",
+            self.font_preview,
+        )
+
+        # -------------------------------------------------
+        # Pinned Priority appearance
+        # -------------------------------------------------
+        self.pinned_style_combo = QComboBox()
+        self.pinned_style_combo.addItem(
+            "Auto — Follow App Theme",
+            "auto",
+        )
+        self.pinned_style_combo.addItem(
+            "Light Cards",
+            "light",
+        )
+        self.pinned_style_combo.addItem(
+            "Dark Cards",
+            "dark",
+        )
+        self.pinned_style_combo.addItem(
+            "Glass / Translucent",
+            "glass",
+        )
+        self.pinned_style_combo.addItem(
+            "High Contrast",
+            "high_contrast",
+        )
+
+        current_pin_style = str(
+            self.settings_manager.get(
+                "pinned_card_style",
+                "auto",
+            )
+        )
+
+        pin_style_idx = (
+            self.pinned_style_combo.findData(
+                current_pin_style
+            )
+        )
+        if pin_style_idx >= 0:
+            self.pinned_style_combo.setCurrentIndex(
+                pin_style_idx
+            )
+
+        self.pinned_style_combo.setToolTip(
+            "Controls only the Pinned Priorities cards. "
+            "Auto follows Todo Bird Light/Dark mode."
+        )
+        t_layout.addRow(
+            "Pinned Card Appearance",
+            self.pinned_style_combo,
+        )
+
+        # Connect only after initial values are loaded.
+        self.font_family_combo.currentTextChanged.connect(
+            self.on_font_family_changed
+        )
+        self.font_size_spin.valueChanged.connect(
+            self.on_font_size_changed
+        )
+        self.font_weight_combo.currentIndexChanged.connect(
+            self.on_font_weight_changed
+        )
+        self.pinned_style_combo.currentIndexChanged.connect(
+            self.on_pinned_style_changed
+        )
+
+        layout.addWidget(theme_card)
+
+        # 2. Companion & Voice Personalization Card
+        companion_card = QFrame()
+        companion_card.setObjectName("CardWidget")
+        c_layout = QFormLayout(companion_card)
+
+        c_title = QLabel("🕊️ Companion & Voice Personalization")
+        c_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        c_layout.addRow(c_title)
+
+        self.cb_companion_enabled = QCheckBox("Enable Desktop Avocet Companion")
+        self.cb_companion_enabled.setChecked(
+            self.settings_manager.get("companion_enabled", True)
+        )
+        self.cb_companion_enabled.toggled.connect(
+            lambda val: self.settings_manager.set("companion_enabled", val)
+        )
+        c_layout.addRow(self.cb_companion_enabled)
+
+        self.cb_voice_enabled = QCheckBox("Enable Companion Voice")
+        self.cb_voice_enabled.setChecked(
+            self.settings_manager.get("voice_enabled", True)
+        )
+        self.cb_voice_enabled.toggled.connect(
+            lambda val: self.settings_manager.set("voice_enabled", val)
+        )
+        c_layout.addRow(self.cb_voice_enabled)
+
+        # Time-period greeting controls.
+        # Each enabled period is allowed to speak once per day.
+        self.cb_greet_morning = QCheckBox("Morning")
+        self.cb_greet_morning.setChecked(
+            self.settings_manager.get("greeting_morning_enabled", True)
+        )
+        self.cb_greet_morning.toggled.connect(
+            lambda val: self.settings_manager.set("greeting_morning_enabled", val)
+        )
+        c_layout.addRow("Speak greeting", self.cb_greet_morning)
+
+        self.cb_greet_afternoon = QCheckBox("Afternoon")
+        self.cb_greet_afternoon.setChecked(
+            self.settings_manager.get("greeting_afternoon_enabled", True)
+        )
+        self.cb_greet_afternoon.toggled.connect(
+            lambda val: self.settings_manager.set("greeting_afternoon_enabled", val)
+        )
+        c_layout.addRow("", self.cb_greet_afternoon)
+
+        self.cb_greet_evening = QCheckBox("Evening")
+        self.cb_greet_evening.setChecked(
+            self.settings_manager.get("greeting_evening_enabled", True)
+        )
+        self.cb_greet_evening.toggled.connect(
+            lambda val: self.settings_manager.set("greeting_evening_enabled", val)
+        )
+        c_layout.addRow("", self.cb_greet_evening)
+
+        self.cb_greet_night = QCheckBox("Night")
+        self.cb_greet_night.setChecked(
+            self.settings_manager.get("greeting_night_enabled", True)
+        )
+        self.cb_greet_night.toggled.connect(
+            lambda val: self.settings_manager.set("greeting_night_enabled", val)
+        )
+        c_layout.addRow("", self.cb_greet_night)
+
+        self.spin_companion_visible = QSpinBox()
+        self.spin_companion_visible.setRange(5, 120)
+        self.spin_companion_visible.setSuffix(" sec")
+        self.spin_companion_visible.setValue(
+            self.settings_manager.get(
+                "companion_visible_seconds",
+                24
+            )
+        )
+        self.spin_companion_visible.valueChanged.connect(
+            lambda val: self.settings_manager.set(
+                "companion_visible_seconds",
+                val
+            )
+        )
+        c_layout.addRow(
+            "Companion Visible Duration",
+            self.spin_companion_visible
+        )
+
+        self.cb_devotional_intro = QCheckBox(
+            "Enable Morning Devotional Intro"
+        )
+        self.cb_devotional_intro.setChecked(
+            self.settings_manager.get(
+                "devotional_intro",
+                True
+            )
+        )
+        self.cb_devotional_intro.toggled.connect(
+            lambda val: self.settings_manager.set(
+                "devotional_intro",
+                val
+            )
+        )
+        c_layout.addRow(self.cb_devotional_intro)
+
+        self.morning_message_edit = QPlainTextEdit()
+        self.morning_message_edit.setMaximumHeight(85)
+        self.morning_message_edit.setPlainText(
+            self.settings_manager.get(
+                "custom_greeting_morning",
+                "Good morning. Welcome back. Please begin your day peacefully."
+            )
+        )
+        self.morning_message_edit.textChanged.connect(
+            lambda: self.settings_manager.set(
+                "custom_greeting_morning",
+                self.morning_message_edit.toPlainText().strip()
+            )
+        )
+        c_layout.addRow(
+            "Morning Welcome Message",
+            self.morning_message_edit
+        )
+
+        self.afternoon_message_edit = QPlainTextEdit()
+        self.afternoon_message_edit.setMaximumHeight(85)
+        self.afternoon_message_edit.setPlainText(
+            self.settings_manager.get(
+                "custom_greeting_afternoon",
+                "Good afternoon. Welcome back. Let us continue with calm focus."
+            )
+        )
+        self.afternoon_message_edit.textChanged.connect(
+            lambda: self.settings_manager.set(
+                "custom_greeting_afternoon",
+                self.afternoon_message_edit.toPlainText().strip()
+            )
+        )
+        c_layout.addRow(
+            "Afternoon Welcome Message",
+            self.afternoon_message_edit
+        )
+
+        self.evening_message_edit = QPlainTextEdit()
+        self.evening_message_edit.setMaximumHeight(85)
+        self.evening_message_edit.setPlainText(
+            self.settings_manager.get(
+                "custom_greeting_evening",
+                "Good evening. Welcome back. Let us complete the important work peacefully."
+            )
+        )
+        self.evening_message_edit.textChanged.connect(
+            lambda: self.settings_manager.set(
+                "custom_greeting_evening",
+                self.evening_message_edit.toPlainText().strip()
+            )
+        )
+        c_layout.addRow(
+            "Evening Welcome Message",
+            self.evening_message_edit
+        )
+
+        self.night_message_edit = QPlainTextEdit()
+        self.night_message_edit.setMaximumHeight(85)
+        self.night_message_edit.setPlainText(
+            self.settings_manager.get(
+                "custom_greeting_night",
+                "Good evening. Welcome back. I hope your day went well. Let us finish only what is important."
+            )
+        )
+        self.night_message_edit.textChanged.connect(
+            lambda: self.settings_manager.set(
+                "custom_greeting_night",
+                self.night_message_edit.toPlainText().strip()
+            )
+        )
+        c_layout.addRow(
+            "Night Welcome Message",
+            self.night_message_edit
+        )
+
+        self.shutdown_message_edit = QPlainTextEdit()
+        self.shutdown_message_edit.setMaximumHeight(85)
+        self.shutdown_message_edit.setPlainText(
+            self.settings_manager.get(
+                "custom_greeting_shutdown",
+                "Before you rest, shall we prepare tomorrow's work together?"
+            )
+        )
+        self.shutdown_message_edit.textChanged.connect(
+            lambda: self.settings_manager.set(
+                "custom_greeting_shutdown",
+                self.shutdown_message_edit.toPlainText().strip()
+            )
+        )
+        c_layout.addRow(
+            "Shutdown Message",
+            self.shutdown_message_edit
+        )
+
+        self.save_companion_btn = QPushButton("💾 Save Companion Settings")
+        self.save_companion_btn.setObjectName("PrimaryButton")
+        self.save_companion_btn.clicked.connect(
+            self.save_companion_settings
+        )
+        c_layout.addRow(self.save_companion_btn)
+
+        layout.addWidget(companion_card)
+
+        # 3. Calendar & Working Week Card
+        ww_card = QFrame()
+        ww_card.setObjectName("CardWidget")
+        ww_layout = QFormLayout(ww_card)
+        ww_title = QLabel("📅 Calendar & Working Week Preferences")
+        ww_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        ww_layout.addRow(ww_title)
+
+        days_layout = QHBoxLayout()
+        current_weekends = set(self.working_week_service.get_weekend_days())
+        for day_code, day_name in WEEKDAY_NAMES:
+            cb = QCheckBox(day_name[:3])
+            cb.setToolTip(f"Mark {day_name} as Weekend")
+            cb.setChecked(day_code in current_weekends)
+            cb.toggled.connect(self.on_weekend_days_changed)
+            days_layout.addWidget(cb)
+            self.day_checkboxes[day_code] = cb
+
+        ww_layout.addRow("Weekend Days", days_layout)
+
+        # Weekend Opacity & Shading
+        self.cb_enable_shading = QCheckBox("Enable Weekend Shading Overlay")
+        self.cb_enable_shading.setChecked(self.settings_manager.get("enable_weekend_shading", True))
+        self.cb_enable_shading.toggled.connect(lambda val: self.settings_manager.set("enable_weekend_shading", val))
+        ww_layout.addRow(self.cb_enable_shading)
+
+        opacity_layout = QHBoxLayout()
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        curr_op = self.settings_manager.get("weekend_opacity", 30)
+        self.opacity_slider.setValue(curr_op)
+        self.opacity_label = QLabel(f"{curr_op}%")
+        self.opacity_slider.valueChanged.connect(self.on_opacity_changed)
+        opacity_layout.addWidget(self.opacity_slider)
+        opacity_layout.addWidget(self.opacity_label)
+        ww_layout.addRow("Weekend Shading Opacity", opacity_layout)
+
+        layout.addWidget(ww_card)
+
+        # 3. Gantt Appearance Customization Card
+        gantt_card = QFrame()
+        gantt_card.setObjectName("CardWidget")
+        g_layout = QFormLayout(gantt_card)
+        g_title = QLabel("📊 Gantt Chart Theme & Custom Task Colors")
+        g_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        g_layout.addRow(g_title)
+
+        self.gantt_mode_combo = QComboBox()
+        self.gantt_mode_combo.addItems(["Follow Application Theme", "Light Gantt", "Dark Gantt", "High Contrast", "Custom"])
+        self.gantt_mode_combo.currentTextChanged.connect(self.on_gantt_mode_changed)
+        g_layout.addRow("Gantt Theme Mode", self.gantt_mode_combo)
+
+        # Color Pickers
+        colors_grid = QFormLayout()
+        for key, label_text in COLOR_KEYS:
+            c_val = self.custom_colors.get(key, DEFAULT_GANTT_COLORS.get(key, "#3584E4"))
+            btn = QPushButton(c_val)
+            btn.setStyleSheet(f"background-color: {c_val}; color: #FFFFFF; font-weight: 600; border-radius: 6px; padding: 4px 12px;")
+            btn.clicked.connect(lambda _, k=key, b=btn: self.pick_gantt_color(k, b))
+            colors_grid.addRow(label_text, btn)
+            self.color_buttons[key] = btn
+
+        g_layout.addRow("Custom Colors", colors_grid)
+
+        restore_btn = QPushButton("🔄 Restore Gantt Defaults")
+        restore_btn.clicked.connect(self.restore_gantt_defaults)
+        g_layout.addRow(restore_btn)
+
+        layout.addWidget(gantt_card)
+
+        # 4. UX Safety & Delete Confirmation Card
+        safety_card = QFrame()
+        safety_card.setObjectName("CardWidget")
+        s_layout = QFormLayout(safety_card)
+        s_title = QLabel("🛡️ UX Safety & Task Deletion Protection")
+        s_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        s_layout.addRow(s_title)
+
+        self.cb_confirm_del = QCheckBox("Confirm before deleting tasks")
+        self.cb_confirm_del.setChecked(self.settings_manager.get("confirm_delete_task", True))
+        self.cb_confirm_del.toggled.connect(lambda val: self.settings_manager.set("confirm_delete_task", val))
+        s_layout.addRow(self.cb_confirm_del)
+
+        layout.addWidget(safety_card)
+
+        # 5. Delay Intelligence Rules Card
+        delay_card = QFrame()
+        delay_card.setObjectName("CardWidget")
+        d_layout = QFormLayout(delay_card)
+        d_title = QLabel("⏳ Delay Intelligence & Threshold Rules")
+        d_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        d_layout.addRow(d_title)
+
+        self.spin_tol = QSpinBox()
+        self.spin_tol.setRange(0, 30)
+        self.spin_tol.setValue(self.settings_manager.get("on_time_tolerance_minutes", 5))
+        self.spin_tol.valueChanged.connect(lambda v: self.settings_manager.set("on_time_tolerance_minutes", v))
+        d_layout.addRow("On-Time Tolerance (mins)", self.spin_tol)
+
+        self.spin_slight = QSpinBox()
+        self.spin_slight.setRange(1, 60)
+        self.spin_slight.setValue(self.settings_manager.get("slight_delay_minutes", 15))
+        self.spin_slight.valueChanged.connect(lambda v: self.settings_manager.set("slight_delay_minutes", v))
+        d_layout.addRow("Slight Delay Threshold (mins)", self.spin_slight)
+
+        self.spin_mod = QSpinBox()
+        self.spin_mod.setRange(1, 120)
+        self.spin_mod.setValue(self.settings_manager.get("moderate_delay_minutes", 30))
+        self.spin_mod.valueChanged.connect(lambda v: self.settings_manager.set("moderate_delay_minutes", v))
+        d_layout.addRow("Moderate Delay Threshold (mins)", self.spin_mod)
+
+        self.spin_sev = QSpinBox()
+        self.spin_sev.setRange(1, 300)
+        self.spin_sev.setValue(self.settings_manager.get("severe_delay_minutes", 60))
+        self.spin_sev.valueChanged.connect(lambda v: self.settings_manager.set("severe_delay_minutes", v))
+        d_layout.addRow("Severe Delay Threshold (mins)", self.spin_sev)
+
+        self.cb_req_sev = QCheckBox("Require Justification for Severe Delays")
+        self.cb_req_sev.setChecked(self.settings_manager.get("require_justification_severe", True))
+        self.cb_req_sev.toggled.connect(lambda chk: self.settings_manager.set("require_justification_severe", chk))
+        d_layout.addRow(self.cb_req_sev)
+
+        layout.addWidget(delay_card)
+
+        # 6. Behavioral Appreciation System Card
+        apprec_card = QFrame()
+        apprec_card.setObjectName("CardWidget")
+        ap_layout = QFormLayout(apprec_card)
+        ap_title = QLabel("🌟 Positive Feedback & Appreciation System")
+        ap_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        ap_layout.addRow(ap_title)
+
+        self.cb_apprec = QCheckBox("Enable Positive Feedback & Appreciation")
+        self.cb_apprec.setChecked(self.settings_manager.get("appreciation_enabled", True))
+        self.cb_apprec.toggled.connect(lambda chk: self.settings_manager.set("appreciation_enabled", chk))
+        ap_layout.addRow(self.cb_apprec)
+
+        self.cb_voice_apprec = QCheckBox("Voice Speech Synthesis for Appreciation")
+        self.cb_voice_apprec.setChecked(self.settings_manager.get("voice_appreciation_enabled", True))
+        self.cb_voice_apprec.toggled.connect(lambda chk: self.settings_manager.set("voice_appreciation_enabled", chk))
+        ap_layout.addRow(self.cb_voice_apprec)
+
+        self.apprec_level_combo = QComboBox()
+        self.apprec_level_combo.addItems(["Minimal", "Balanced", "Encouraging"])
+        self.apprec_level_combo.setCurrentText(self.settings_manager.get("appreciation_level", "balanced").capitalize())
+        self.apprec_level_combo.currentTextChanged.connect(lambda txt: self.settings_manager.set("appreciation_level", txt.lower()))
+        ap_layout.addRow("Appreciation Frequency", self.apprec_level_combo)
+
+        layout.addWidget(apprec_card)
+
+        # 7. Linux Desktop Launcher Integration Card
+        dt_card = QFrame()
+        dt_card.setObjectName("CardWidget")
+        dt_layout = QFormLayout(dt_card)
+        dt_title = QLabel("🖥️ Ubuntu Desktop Launcher & Autostart")
+        dt_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        dt_layout.addRow(dt_title)
+
+        install_dt_btn = QPushButton("Install Desktop Application Launcher (.desktop)")
+        install_dt_btn.setObjectName("PrimaryButton")
+        install_dt_btn.clicked.connect(self.install_desktop_launchers)
+        dt_layout.addRow(install_dt_btn)
+
+        self.cb_autostart = QCheckBox("Launch Todo Bird automatically at login")
+        self.cb_autostart.setChecked(self.settings_manager.get("autostart_at_login", False))
+        self.cb_autostart.toggled.connect(self.toggle_autostart)
+        dt_layout.addRow(self.cb_autostart)
+
+        layout.addWidget(dt_card)
+
+        # 8. Database Backup Card
+        db_card = QFrame()
+        db_card.setObjectName("CardWidget")
+        db_layout = QHBoxLayout(db_card)
+        db_lbl = QLabel("💾 SQLite Local Database Backup")
+        db_lbl.setStyleSheet("font-size: 15px; font-weight: 700;")
+        backup_btn = QPushButton("Create Database Backup")
+        backup_btn.setObjectName("PrimaryButton")
+        backup_btn.clicked.connect(self.create_backup)
+
+        db_layout.addWidget(db_lbl)
+        db_layout.addStretch()
+        db_layout.addWidget(backup_btn)
+        layout.addWidget(db_card)
+
+        scroll.setWidget(container)
+        self.main_layout.addWidget(scroll, 1)
+
+    def refresh_data(self):
+        mode = self.settings_manager.get("theme", "dark")
+        self.theme_combo.setCurrentText("Dark Mode" if mode == "dark" else "Light Mode")
+
+        # Typography / pinned appearance persistence
+        if hasattr(self, "font_family_combo"):
+            family = str(
+                self.settings_manager.get(
+                    "ui_font_family",
+                    QApplication.font().family(),
+                )
+            )
+            idx = self.font_family_combo.findText(
+                family
+            )
+            if idx >= 0:
+                self.font_family_combo.blockSignals(True)
+                self.font_family_combo.setCurrentIndex(idx)
+                self.font_family_combo.blockSignals(False)
+
+        if hasattr(self, "font_size_spin"):
+            try:
+                size = int(
+                    self.settings_manager.get(
+                        "ui_font_size",
+                        10,
+                    )
+                )
+            except (TypeError, ValueError):
+                size = 10
+
+            self.font_size_spin.blockSignals(True)
+            self.font_size_spin.setValue(size)
+            self.font_size_spin.blockSignals(False)
+
+        if hasattr(self, "font_weight_combo"):
+            weight = str(
+                self.settings_manager.get(
+                    "ui_font_weight",
+                    "normal",
+                )
+            )
+            idx = self.font_weight_combo.findData(
+                weight
+            )
+            if idx >= 0:
+                self.font_weight_combo.blockSignals(True)
+                self.font_weight_combo.setCurrentIndex(idx)
+                self.font_weight_combo.blockSignals(False)
+
+        if hasattr(self, "pinned_style_combo"):
+            pin_style = str(
+                self.settings_manager.get(
+                    "pinned_card_style",
+                    "auto",
+                )
+            )
+            idx = self.pinned_style_combo.findData(
+                pin_style
+            )
+            if idx >= 0:
+                self.pinned_style_combo.blockSignals(True)
+                self.pinned_style_combo.setCurrentIndex(idx)
+                self.pinned_style_combo.blockSignals(False)
+
+        g_mode = self.settings_manager.get("gantt_theme_mode", "follow_app")
+        mode_text = g_mode.replace("_", " ").title()
+        self.gantt_mode_combo.setCurrentText(mode_text if mode_text != "Follow App" else "Follow Application Theme")
+
+        current_weekends = set(self.working_week_service.get_weekend_days())
+        for code, cb in self.day_checkboxes.items():
+            cb.blockSignals(True)
+            cb.setChecked(code in current_weekends)
+            cb.blockSignals(False)
+
+    def save_companion_settings(self):
+        self.settings_manager.set(
+            "companion_enabled",
+            self.cb_companion_enabled.isChecked()
+        )
+        self.settings_manager.set(
+            "voice_enabled",
+            self.cb_voice_enabled.isChecked()
+        )
+        self.settings_manager.set(
+            "greeting_morning_enabled",
+            self.cb_greet_morning.isChecked()
+        )
+        self.settings_manager.set(
+            "greeting_afternoon_enabled",
+            self.cb_greet_afternoon.isChecked()
+        )
+        self.settings_manager.set(
+            "greeting_evening_enabled",
+            self.cb_greet_evening.isChecked()
+        )
+        self.settings_manager.set(
+            "greeting_night_enabled",
+            self.cb_greet_night.isChecked()
+        )
+        self.settings_manager.set(
+            "companion_visible_seconds",
+            self.spin_companion_visible.value()
+        )
+        self.settings_manager.set(
+            "devotional_intro",
+            self.cb_devotional_intro.isChecked()
+        )
+        self.settings_manager.set(
+            "custom_greeting_morning",
+            self.morning_message_edit.toPlainText().strip()
+        )
+        self.settings_manager.set(
+            "custom_greeting_afternoon",
+            self.afternoon_message_edit.toPlainText().strip()
+        )
+        self.settings_manager.set(
+            "custom_greeting_evening",
+            self.evening_message_edit.toPlainText().strip()
+        )
+        self.settings_manager.set(
+            "custom_greeting_night",
+            self.night_message_edit.toPlainText().strip()
+        )
+        self.settings_manager.set(
+            "custom_greeting_shutdown",
+            self.shutdown_message_edit.toPlainText().strip()
+        )
+
+        QMessageBox.information(
+            self,
+            "Companion Settings Saved",
+            "Your Avocet companion and custom voice messages have been saved."
+        )
+
+    def on_weekend_days_changed(self):
+        selected_days = [code for code, cb in self.day_checkboxes.items() if cb.isChecked()]
+        self.working_week_service.set_weekend_days(selected_days)
+
+    def on_opacity_changed(self, value: int):
+        self.opacity_label.setText(f"{value}%")
+        self.settings_manager.set("weekend_opacity", value)
+
+    def pick_gantt_color(self, key: str, btn: QPushButton):
+        curr_hex = self.custom_colors.get(key, DEFAULT_GANTT_COLORS.get(key, "#3584E4"))
+        col = QColorDialog.getColor(initial=curr_hex, parent=self)
+        if col.isValid():
+            hex_val = col.name()
+            self.custom_colors[key] = hex_val
+            btn.setText(hex_val)
+            btn.setStyleSheet(f"background-color: {hex_val}; color: #FFFFFF; font-weight: 600; border-radius: 6px; padding: 4px 12px;")
+            self.settings_manager.set("gantt_custom_colors", self.custom_colors)
+            self.settings_manager.set("gantt_theme_mode", "custom")
+            self.gantt_mode_combo.setCurrentText("Custom")
+
+    def on_gantt_mode_changed(self, text: str):
+        mode = text.lower().replace(" ", "_")
+        if mode == "follow_application_theme":
+            mode = "follow_app"
+        self.settings_manager.set("gantt_theme_mode", mode)
+
+    def restore_gantt_defaults(self):
+        self.custom_colors = dict(DEFAULT_GANTT_COLORS)
+        self.settings_manager.set("gantt_custom_colors", self.custom_colors)
+        self.settings_manager.set("gantt_theme_mode", "follow_app")
+        self.gantt_mode_combo.setCurrentText("Follow Application Theme")
+
+        for key, btn in self.color_buttons.items():
+            val = DEFAULT_GANTT_COLORS.get(key, "#3584E4")
+            btn.setText(val)
+            btn.setStyleSheet(f"background-color: {val}; color: #FFFFFF; font-weight: 600; border-radius: 6px; padding: 4px 12px;")
+
+    def _apply_live_appearance(self):
+        app_window = self.window()
+
+        if hasattr(app_window, "theme_controller"):
+            app_window.theme_controller.apply_theme()
+
+        # Repaint all existing pinned workspaces immediately.
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                from todo_bird_app.widgets.pinned_priorities_widget import (
+                    PinnedPrioritiesWidget,
+                )
+
+                for widget in app.allWidgets():
+                    if isinstance(
+                        widget,
+                        PinnedPrioritiesWidget,
+                    ):
+                        widget.refresh_data()
+            except Exception:
+                pass
+
+    def on_font_family_changed(self, family: str):
+        if not family:
+            return
+
+        self.settings_manager.set(
+            "ui_font_family",
+            family,
+        )
+
+        self._apply_live_appearance()
+
+    def on_font_size_changed(self, value: int):
+        self.settings_manager.set(
+            "ui_font_size",
+            int(value),
+        )
+
+        self._apply_live_appearance()
+
+    def on_font_weight_changed(self, _index: int):
+        value = (
+            self.font_weight_combo.currentData()
+            or "normal"
+        )
+
+        self.settings_manager.set(
+            "ui_font_weight",
+            value,
+        )
+
+        self._apply_live_appearance()
+
+    def on_pinned_style_changed(self, _index: int):
+        value = (
+            self.pinned_style_combo.currentData()
+            or "auto"
+        )
+
+        self.settings_manager.set(
+            "pinned_card_style",
+            value,
+        )
+
+        # This does not need to rebuild the whole application
+        # theme, but refreshing here also updates font preview.
+        self._apply_live_appearance()
+
+    def on_theme_changed(self, text: str):
+        mode = "dark" if "Dark" in text else "light"
+        app = self.window()
+        if hasattr(app, "theme_controller"):
+            app.theme_controller.apply_theme(mode=mode)
+
+    def on_accent_changed(self, text: str):
+        colors = {"Ubuntu": "#E95420", "Adwaita": "#3584E4", "Emerald": "#10B981", "Purple": "#8B5CF6"}
+        color = "#E95420"
+        for k, v in colors.items():
+            if k in text:
+                color = v
+                break
+        app = self.window()
+        if hasattr(app, "theme_controller"):
+            app.theme_controller.apply_theme(accent_color=color)
+
+    def install_desktop_launchers(self):
+        success, msg = DesktopLauncherService.create_desktop_launchers()
+        if success:
+            QMessageBox.information(self, "Launcher Created", msg)
+        else:
+            QMessageBox.critical(self, "Error Creating Launcher", msg)
+
+    def toggle_autostart(self, enabled: bool):
+        self.settings_manager.set("autostart_at_login", enabled)
+        DesktopLauncherService.set_autostart(enabled)
+
+    def create_backup(self):
+        try:
+            db_file = Path(self.db_manager.db_path)
+            backup_file = db_file.parent / f"todo_bird_backup.db"
+            shutil.copy(db_file, backup_file)
+            QMessageBox.information(self, "Backup Successful", f"Database backed up to:\n{backup_file}")
+        except Exception as e:
+            QMessageBox.critical(self, "Backup Failed", str(e))

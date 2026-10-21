@@ -1,0 +1,167 @@
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QTextEdit, QPushButton, QFrame
+)
+from PySide6.QtCore import Qt
+from todo_bird_app.models.task import Task
+
+DELAY_REASONS = [
+    "Task took longer than expected",
+    "Interrupted by another task",
+    "Meeting or phone call",
+    "Technical problem",
+    "Waiting for someone",
+    "Low energy or health",
+    "Priority changed",
+    "Personal reason",
+    "Other"
+]
+
+class DelayJustificationDialog(QDialog):
+    """
+    Supportive Delay Justification Dialog.
+    Collects delay reasons for future planning accuracy without criticizing the user.
+    """
+    def __init__(self, task: Task, delay_minutes: int = 0, parent=None):
+        super().__init__(parent)
+        self.task = task
+        self.delay_minutes = delay_minutes
+        self.selected_reason = DELAY_REASONS[0]
+        self.notes = ""
+
+        self.setWindowTitle("3W1H Recovery & Delay Review")
+        self.setFixedSize(480, 360)
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        # Title Card
+        title_card = QFrame()
+        title_card.setObjectName("CardWidget")
+        tc_layout = QVBoxLayout(title_card)
+
+        head = QLabel("🌱 Reflect on Task Delay")
+        head.setStyleSheet("font-size: 16px; font-weight: 700;")
+        tc_layout.addWidget(head)
+
+        desc = QLabel(
+            f"This task took about {self.delay_minutes} extra minutes. "
+            "Recording the reason helps make tomorrow's planning more realistic and stress-free."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #9CA3AF; font-size: 12px;")
+        tc_layout.addWidget(desc)
+
+        layout.addWidget(title_card)
+
+        # Reason Selector
+        layout.addWidget(QLabel("What caused the delay?"))
+        self.reason_combo = QComboBox()
+        self.reason_combo.addItems(DELAY_REASONS)
+        layout.addWidget(self.reason_combo)
+
+        # -------------------------------------------------
+        # Professional recovery analysis — 3W1H+
+        # -------------------------------------------------
+        layout.addWidget(
+            QLabel("📋 Recovery 3W1H+")
+        )
+
+        self.what_input = QTextEdit()
+        self.what_input.setMaximumHeight(58)
+        self.what_input.setPlaceholderText(
+            "What happened?"
+        )
+        layout.addWidget(
+            QLabel("What happened?")
+        )
+        layout.addWidget(self.what_input)
+
+        self.why_input = QTextEdit()
+        self.why_input.setMaximumHeight(58)
+        self.why_input.setPlaceholderText(
+            "Why did it happen / root cause?"
+        )
+        layout.addWidget(
+            QLabel("Why?")
+        )
+        layout.addWidget(self.why_input)
+
+        self.who_input = QTextEdit()
+        self.who_input.setMaximumHeight(48)
+        self.who_input.setPlaceholderText(
+            "Who owns recovery?"
+        )
+        layout.addWidget(
+            QLabel("Who owns recovery?")
+        )
+        layout.addWidget(self.who_input)
+
+        self.when_input = QTextEdit()
+        self.when_input.setMaximumHeight(48)
+        self.when_input.setPlaceholderText(
+            "When will this recover?"
+        )
+        layout.addWidget(
+            QLabel("When?")
+        )
+        layout.addWidget(self.when_input)
+
+        self.how_input = QTextEdit()
+        self.how_input.setMaximumHeight(58)
+        self.how_input.setPlaceholderText(
+            "How will recurrence be prevented?"
+        )
+        layout.addWidget(
+            QLabel("How?")
+        )
+        layout.addWidget(self.how_input)
+
+        # Notes Input
+        layout.addWidget(QLabel("Additional Notes (Optional)"))
+        self.notes_input = QTextEdit()
+        self.notes_input.setPlaceholderText("Any context or insights...")
+        self.notes_input.setMaximumHeight(70)
+        layout.addWidget(self.notes_input)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        save_btn = QPushButton("Save Reflection")
+        save_btn.setObjectName("PrimaryButton")
+        save_btn.clicked.connect(self.on_save)
+        btn_layout.addWidget(save_btn)
+
+        layout.addLayout(btn_layout)
+
+    def on_save(self):
+        self.selected_reason = self.reason_combo.currentText()
+
+        recovery_parts = [
+            "WHAT: " + self.what_input.toPlainText().strip(),
+            "WHY: " + self.why_input.toPlainText().strip(),
+            "WHO: " + self.who_input.toPlainText().strip(),
+            "WHEN: " + self.when_input.toPlainText().strip(),
+            "HOW: " + self.how_input.toPlainText().strip(),
+        ]
+
+        extra_notes = (
+            self.notes_input
+            .toPlainText()
+            .strip()
+        )
+
+        if extra_notes:
+            recovery_parts.append(
+                "NOTES: " + extra_notes
+            )
+
+        self.notes = "\n".join(
+            part
+            for part in recovery_parts
+            if not part.endswith(": ")
+        )
+        self.accept()

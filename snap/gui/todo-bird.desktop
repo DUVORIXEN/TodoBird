@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TODO BIRD
+GenericName=Task Manager & Companion
+Comment=Offline Desktop Personal Assistant & Task Manager
+Exec=todo-bird %U
+Icon=${SNAP}/meta/gui/todo-bird.png
+Terminal=false
+Categories=Utility;Office;ProjectManagement;
+StartupWMClass=TODO BIRD
+Keywords=todo;task;gantt;assistant;productivity;
+StartupNotify=false

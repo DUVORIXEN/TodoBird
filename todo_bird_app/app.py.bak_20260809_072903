@@ -1,0 +1,106 @@
+import sys
+import os
+import argparse
+import logging
+from pathlib import Path
+
+# Add project root directory to sys.path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from PySide6.QtWidgets import QApplication
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
+
+from todo_bird_app.database import DatabaseManager
+from todo_bird_app.settings.settings_manager import SettingsManager
+from todo_bird_app.controllers.theme_controller import ThemeController
+from todo_bird_app.views.main_window import MainWindow
+from todo_bird_app.services.desktop_launcher import DesktopLauncherService
+
+SINGLE_INSTANCE_SERVER_NAME = "todo_bird_single_instance_socket"
+
+def setup_logging():
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "todo_bird.log"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+def main():
+    parser = argparse.ArgumentParser(description="TODO BIRD - Offline Productivity Companion")
+    parser.add_argument("--check-init", action="store_true", help="Initialize components and exit 0 (for testing)")
+    parser.add_argument("--database", type=str, help="Path to custom SQLite database file")
+    args = parser.parse_args()
+
+    if args.database:
+        os.environ["TODO_BIRD_DB"] = str(Path(args.database).resolve())
+
+    setup_logging()
+    logger = logging.getLogger("todo_bird")
+    logger.info("Starting TODO BIRD Desktop Application...")
+
+    # Set offscreen QPA platform if in check-init or no display present
+    if args.check_init or "DISPLAY" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("TODO BIRD")
+    app.setOrganizationName("TodoBird")
+
+    # Check single-instance socket unless in check-init mode
+    if not args.check_init and "QT_QPA_PLATFORM" not in os.environ:
+        socket = QLocalSocket()
+        socket.connectToServer(SINGLE_INSTANCE_SERVER_NAME)
+        if socket.waitForConnected(500):
+            logger.info("TODO BIRD is already running. Focus request sent to active instance.")
+            socket.write(b"activate")
+            socket.waitForBytesWritten(1000)
+            socket.disconnectFromServer()
+            return 0
+
+    # Create Single Instance Local Server
+    server = QLocalServer()
+    # Clean up stale socket file if exists
+    QLocalServer.removeServer(SINGLE_INSTANCE_SERVER_NAME)
+    server.listen(SINGLE_INSTANCE_SERVER_NAME)
+
+    # Initialize Core Services & Controllers
+    db_manager = DatabaseManager()
+    settings_manager = SettingsManager(db_manager)
+    theme_controller = ThemeController(settings_manager)
+
+    # Apply initial theme
+    theme_controller.apply_theme()
+
+    # Create Main Window
+    main_window = MainWindow(db_manager, settings_manager, theme_controller)
+
+    # Connect server newConnection to focus window
+    def on_new_connection():
+        conn = server.nextPendingConnection()
+        if conn:
+            conn.waitForReadyRead(500)
+            main_window.show()
+            main_window.raise_()
+            main_window.activateWindow()
+
+    server.newConnection.connect(on_new_connection)
+
+    # Ensure desktop launchers exist
+    DesktopLauncherService.create_desktop_launchers()
+
+    if args.check_init:
+        logger.info("Check-init verification successful. Exiting clean.")
+        return 0
+
+    main_window.show()
+    return app.exec()
+
+if __name__ == "__main__":
+    sys.exit(main())

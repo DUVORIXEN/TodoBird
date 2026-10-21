@@ -1,0 +1,46 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Personal local data, databases and settings (NEVER COMMIT TO PUBLIC REPO)
+data/
+config/
+logs/
+backups/
+todo_bird_app/data/
+todo_bird_app/config/
+todo_bird_app/logs/
+*.db
+*.db-shm
+*.db-wal
+*.backup
+temp*
+=*
+
+# Packaging and build artifacts
+*.snap
+*.deb
+deb/staging/
+flatpak/build-dir/
+flatpak/.flatpak-builder/
+.flatpak-builder/
+windows/dist/
+
+# IDE / Scratch files
+.vscode/
+.kilocode/
+.opencode/
+scratch_validate.py
+ui_shots/
+ui_shots_task/

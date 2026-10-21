@@ -1,0 +1,84 @@
+import logging
+from pathlib import Path
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QPalette, QColor
+from todo_bird_app.themes.tokens import DARK_PALETTE, LIGHT_PALETTE
+
+logger = logging.getLogger(__name__)
+
+class ThemeController(QObject):
+    """
+    Controller responsible for theme switching, QSS loading, token substitution,
+    and QApplication global QPalette enforcement.
+    """
+    theme_changed = Signal(str)  # Emits theme name ("dark" or "light")
+
+    def __init__(self, settings_manager, parent=None):
+        super().__init__(parent)
+        self.settings_manager = settings_manager
+        self.themes_dir = Path(__file__).parent.parent / "themes"
+        self.current_mode = self.settings_manager.get("theme", "dark")
+        self.accent_color = self.settings_manager.get("accent_color", "#E95420")
+
+    def apply_theme(self, mode: str = None, accent_color: str = None):
+        if mode:
+            self.current_mode = mode
+            self.settings_manager.set("theme", mode)
+        if accent_color:
+            self.accent_color = accent_color
+            self.settings_manager.set("accent_color", accent_color)
+
+        palette_tokens = dict(DARK_PALETTE if self.current_mode == "dark" else LIGHT_PALETTE)
+        palette_tokens["accent_default"] = self.accent_color
+
+        qss_filename = "dark.qss" if self.current_mode == "dark" else "light.qss"
+        qss_path = self.themes_dir / qss_filename
+
+        if not qss_path.exists():
+            logger.error(f"QSS stylesheet not found: {qss_path}")
+            return
+
+        try:
+            with open(qss_path, "r", encoding="utf-8") as f:
+                qss_content = f.read()
+
+            # Substitute color tokens (sort keys by length descending to avoid prefix overlap)
+            sorted_tokens = sorted(palette_tokens.items(), key=lambda item: len(item[0]), reverse=True)
+            for token_key, color_val in sorted_tokens:
+                qss_content = qss_content.replace(f"@{token_key}", color_val)
+
+            app = QApplication.instance()
+            if app:
+                # 1. Enforce Global QPalette
+                qpalette = QPalette()
+                bg_root = QColor(palette_tokens["bg_root"])
+                bg_card = QColor(palette_tokens["bg_card"])
+                text_primary = QColor(palette_tokens["text_primary"])
+                text_secondary = QColor(palette_tokens["text_secondary"])
+                accent = QColor(palette_tokens["accent_default"])
+
+                qpalette.setColor(QPalette.Window, bg_root)
+                qpalette.setColor(QPalette.WindowText, text_primary)
+                qpalette.setColor(QPalette.Base, bg_card)
+                qpalette.setColor(QPalette.AlternateBase, bg_root)
+                qpalette.setColor(QPalette.ToolTipBase, bg_root)
+                qpalette.setColor(QPalette.ToolTipText, text_primary)
+                qpalette.setColor(QPalette.Text, text_primary)
+                qpalette.setColor(QPalette.Button, bg_card)
+                qpalette.setColor(QPalette.ButtonText, text_primary)
+                qpalette.setColor(QPalette.Highlight, accent)
+                qpalette.setColor(QPalette.HighlightedText, QColor("#FFFFFF"))
+
+                app.setPalette(qpalette)
+
+                # 2. Apply QSS Stylesheet
+                app.setStyleSheet(qss_content)
+                logger.info(f"Theme applied: {self.current_mode} with accent {self.accent_color}")
+                self.theme_changed.emit(self.current_mode)
+        except Exception as e:
+            logger.error(f"Error applying theme stylesheet: {e}")
+
+    def toggle_theme(self):
+        new_mode = "light" if self.current_mode == "dark" else "dark"
+        self.apply_theme(mode=new_mode)

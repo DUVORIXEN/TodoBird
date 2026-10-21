@@ -1,0 +1,261 @@
+import calendar
+import logging
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from enum import Enum
+from typing import List, Tuple, Optional
+
+logger = logging.getLogger(__name__)
+
+class ZoomLevel(Enum):
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    YEARLY = "yearly"
+    MULTI_YEAR = "multi_year"
+
+@dataclass
+class TimelineColumn:
+    index: int
+    start_date: date
+    end_date: date
+    primary_header: str      # e.g., "2026"
+    secondary_header: str    # e.g., "W31", "Aug", "Jan", "2026"
+    sub_label: str           # e.g., "27 Jul–02 Aug", "Q3"
+    is_today_period: bool
+    x_offset: float
+    width: float
+
+def add_months(start_date: date, months: int) -> date:
+    """
+    Calendar-safe month arithmetic handling leap years and varying month lengths.
+    """
+    month = start_date.month - 1 + months
+    year = start_date.year + month // 12
+    month = month % 12 + 1
+    day = min(start_date.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+class TimescaleEngine:
+    """
+    Single authority for multi-year Gantt timescale rendering, ISO week calculations,
+    calendar-safe month arithmetic, and dynamic project range expansion.
+    """
+    COLUMN_WIDTHS = {
+        ZoomLevel.DAILY: 60.0,
+        ZoomLevel.WEEKLY: 100.0,
+        ZoomLevel.MONTHLY: 110.0,
+        ZoomLevel.YEARLY: 80.0,
+        ZoomLevel.MULTI_YEAR: 140.0,
+    }
+
+    @staticmethod
+    def get_quarter_label(month: int) -> str:
+        if month in (1, 2, 3):
+            return "Q1"
+        elif month in (4, 5, 6):
+            return "Q2"
+        elif month in (7, 8, 9):
+            return "Q3"
+        else:
+            return "Q4"
+
+    @classmethod
+    def calculate_timescale_range(
+        cls,
+        anchor_date: date,
+        zoom_level: ZoomLevel,
+        tasks: List = None,
+        projects: List = None,
+        past_years: int = 5,
+        future_years: int = 5
+    ) -> Tuple[date, date]:
+        """
+        Calculates visible start and end dates. Dynamically expands future/past bounds
+        to encompass all task and project dates.
+        """
+        curr_year = anchor_date.year
+        min_start = date(curr_year - past_years, 1, 1)
+        max_end = date(curr_year + future_years, 12, 31)
+
+        # Expand dynamically for tasks & projects
+        all_dates = []
+        if tasks:
+            for t in tasks:
+                if t.planned_date:
+                    try:
+                        all_dates.append(datetime.strptime(t.planned_date, "%Y-%m-%d").date())
+                    except ValueError:
+                        pass
+                if t.due_date:
+                    try:
+                        all_dates.append(datetime.strptime(t.due_date, "%Y-%m-%d").date())
+                    except ValueError:
+                        pass
+
+        if all_dates:
+            earliest = min(all_dates)
+            latest = max(all_dates)
+
+            if earliest < min_start:
+                min_start = date(max(1970, earliest.year - 1), 1, 1)
+            if latest > max_end:
+                max_end = date(min(2099, latest.year + 1), 12, 31)
+
+        return min_start, max_end
+
+    @classmethod
+    def generate_columns(
+        cls,
+        zoom_level: ZoomLevel,
+        anchor_date: date,
+        tasks: List = None,
+        projects: List = None
+    ) -> List[TimelineColumn]:
+        """
+        Generates unique, non-repeating timeline columns for the selected zoom level.
+        """
+        today = date.today()
+        col_width = cls.COLUMN_WIDTHS.get(zoom_level, 80.0)
+        columns: List[TimelineColumn] = []
+
+        if zoom_level == ZoomLevel.DAILY:
+            # 14 days past, 21 days future around anchor
+            start_d = anchor_date - timedelta(days=14)
+            days_count = 35
+            for i in range(days_count):
+                c_date = start_d + timedelta(days=i)
+                col = TimelineColumn(
+                    index=i,
+                    start_date=c_date,
+                    end_date=c_date,
+                    primary_header=c_date.strftime("%B %Y"),
+                    secondary_header=c_date.strftime("%d"),
+                    sub_label=c_date.strftime("%a"),
+                    is_today_period=(c_date == today),
+                    x_offset=i * col_width,
+                    width=col_width
+                )
+                columns.append(col)
+
+        elif zoom_level == ZoomLevel.WEEKLY:
+            # ISO Calendar weeks
+            # Find Monday of week 10 weeks before anchor
+            anchor_monday = anchor_date - timedelta(days=anchor_date.weekday())
+            start_monday = anchor_monday - timedelta(weeks=8)
+            weeks_count = 20
+
+            for i in range(weeks_count):
+                w_monday = start_monday + timedelta(weeks=i)
+                w_sunday = w_monday + timedelta(days=6)
+                iso_year, iso_week, _ = w_monday.isocalendar()
+
+                col = TimelineColumn(
+                    index=i,
+                    start_date=w_monday,
+                    end_date=w_sunday,
+                    primary_header=str(iso_year),
+                    secondary_header=f"W{iso_week:02d}",
+                    sub_label=f"{w_monday.strftime('%d %b')}–{w_sunday.strftime('%d %b')}",
+                    is_today_period=(w_monday <= today <= w_sunday),
+                    x_offset=i * col_width,
+                    width=col_width
+                )
+                columns.append(col)
+
+        elif zoom_level == ZoomLevel.MONTHLY:
+            # Monthly sequential columns using calendar-safe add_months
+            start_month = add_months(date(anchor_date.year, anchor_date.month, 1), -6)
+            for i in range(18):
+                m_start = add_months(start_month, i)
+                m_end = add_months(m_start, 1) - timedelta(days=1)
+
+                col = TimelineColumn(
+                    index=i,
+                    start_date=m_start,
+                    end_date=m_end,
+                    primary_header=str(m_start.year),
+                    secondary_header=m_start.strftime("%b"),
+                    sub_label=cls.get_quarter_label(m_start.month),
+                    is_today_period=(m_start <= today <= m_end),
+                    x_offset=i * col_width,
+                    width=col_width
+                )
+                columns.append(col)
+
+        elif zoom_level == ZoomLevel.YEARLY:
+            # All 12 unique months of the selected year
+            sel_year = anchor_date.year
+            for i in range(12):
+                m_start = date(sel_year, i + 1, 1)
+                m_end = add_months(m_start, 1) - timedelta(days=1)
+
+                col = TimelineColumn(
+                    index=i,
+                    start_date=m_start,
+                    end_date=m_end,
+                    primary_header=str(sel_year),
+                    secondary_header=m_start.strftime("%b"),
+                    sub_label=cls.get_quarter_label(i + 1),
+                    is_today_period=(m_start <= today <= m_end),
+                    x_offset=i * col_width,
+                    width=col_width
+                )
+                columns.append(col)
+
+        elif zoom_level == ZoomLevel.MULTI_YEAR:
+            # Multi-Year columns (current_year - 5 to current_year + 5, or expanded)
+            min_start, max_end = cls.calculate_timescale_range(anchor_date, zoom_level, tasks, projects)
+            start_yr = min_start.year
+            end_yr = max_end.year
+            years_count = end_yr - start_yr + 1
+
+            for i in range(years_count):
+                yr = start_yr + i
+                y_start = date(yr, 1, 1)
+                y_end = date(yr, 12, 31)
+
+                col = TimelineColumn(
+                    index=i,
+                    start_date=y_start,
+                    end_date=y_end,
+                    primary_header="Multi-Year Plan",
+                    secondary_header=str(yr),
+                    sub_label="12 Months",
+                    is_today_period=(yr == today.year),
+                    x_offset=i * col_width,
+                    width=col_width
+                )
+                columns.append(col)
+
+        return columns
+
+    @classmethod
+    def date_to_x(cls, target_date: date, columns: List[TimelineColumn]) -> float:
+        """
+        Maps a date to exact pixel X coordinate within visible columns.
+        """
+        if not columns:
+            return 0.0
+
+        if target_date <= columns[0].start_date:
+            return columns[0].x_offset
+
+        if target_date >= columns[-1].end_date:
+            return columns[-1].x_offset + columns[-1].width
+
+        for col in columns:
+            if col.start_date <= target_date <= col.end_date:
+                total_days = (col.end_date - col.start_date).days + 1
+                offset_days = (target_date - col.start_date).days
+                fraction = offset_days / float(max(1, total_days))
+                return col.x_offset + (fraction * col.width)
+
+        return columns[0].x_offset
+
+    @staticmethod
+    def intersects_visible_range(task_start: date, task_end: date, visible_start: date, visible_end: date) -> bool:
+        """
+        Returns True if task date interval intersects the visible timeline range.
+        """
+        return task_start <= visible_end and task_end >= visible_start

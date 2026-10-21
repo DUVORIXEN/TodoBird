@@ -1,0 +1,137 @@
+import logging
+from PySide6.QtWidgets import (
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QFrame
+)
+from PySide6.QtCore import Qt
+
+from todo_bird_app.views.base_view import BaseView
+from todo_bird_app.controllers.task_controller import TaskController
+from todo_bird_app.widgets.task_item_widget import TaskItemWidget
+from todo_bird_app.widgets.task_dialog import TaskDialog
+from todo_bird_app.widgets.state_panel import StatePanel
+
+from todo_bird_app.utils.qt_cleanup import clear_layout
+
+logger = logging.getLogger(__name__)
+
+PAGE_SIZE = 100
+
+class CompletedView(BaseView):
+    """
+    Completed View — Archive of finished tasks with SQL batch pagination.
+    Renders 100 items per page with clear page navigation controls.
+    """
+    def __init__(self, db_manager, settings_manager, parent=None):
+        super().__init__(db_manager, settings_manager, title="Completed Tasks Archive", subtitle="Review finished commitments and accomplishments", parent=parent, typography_area="tasklist")
+        self.task_controller = TaskController(db_manager)
+        self._connect_task_controller_signal("tasks_changed", self.refresh_data)
+        self.current_page = 1
+        self._init_ui()
+        self.refresh_data()
+
+    def _init_ui(self):
+        # Pagination & Counter Bar
+        self.pagi_card = QFrame()
+        self.pagi_card.setObjectName("CardWidget")
+        p_layout = QHBoxLayout(self.pagi_card)
+        p_layout.setContentsMargins(12, 6, 12, 6)
+
+        self.lbl_count_info = QLabel("Showing 0 completed tasks")
+        self.lbl_count_info.setStyleSheet("font-weight: 600; color: #10B981;")
+        p_layout.addWidget(self.lbl_count_info)
+        p_layout.addStretch()
+
+        self.btn_prev_page = QPushButton("◀ Prev")
+        self.btn_prev_page.setFixedWidth(70)
+        self.btn_prev_page.clicked.connect(self.prev_page)
+        p_layout.addWidget(self.btn_prev_page)
+
+        self.lbl_page_num = QLabel("Page 1 of 1")
+        self.lbl_page_num.setStyleSheet("color: #9CA3AF; padding: 0 8px;")
+        p_layout.addWidget(self.lbl_page_num)
+
+        self.btn_next_page = QPushButton("Next ▶")
+        self.btn_next_page.setFixedWidth(70)
+        self.btn_next_page.clicked.connect(self.next_page)
+        p_layout.addWidget(self.btn_next_page)
+
+        self.main_layout.addWidget(self.pagi_card)
+
+        # Tasks list scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+
+        self.list_container = QWidget()
+        self.list_layout = QVBoxLayout(self.list_container)
+        self.list_layout.setContentsMargins(0, 8, 0, 8)
+        self.list_layout.setSpacing(8)
+
+        scroll.setWidget(self.list_container)
+        self.main_layout.addWidget(scroll, 1)
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.refresh_data()
+
+    def next_page(self):
+        self.current_page += 1
+        self.refresh_data()
+
+    def refresh_data(self):
+        super().refresh_data()
+        clear_layout(self.list_layout)
+
+        total_count = self.task_controller.get_completed_tasks_count()
+        total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+
+        if self.current_page > total_pages:
+            self.current_page = total_pages
+
+        offset = (self.current_page - 1) * PAGE_SIZE
+        page_tasks = self.task_controller.get_completed_tasks(limit=PAGE_SIZE, offset=offset)
+
+        # Update Pagination Controls
+        if total_count > 0:
+            start_idx = offset + 1
+            end_idx = min(offset + len(page_tasks), total_count)
+            self.lbl_count_info.setText(f"Showing {start_idx}–{end_idx} of {total_count} completed tasks")
+        else:
+            self.lbl_count_info.setText("Showing 0 completed tasks")
+
+        self.lbl_page_num.setText(f"Page {self.current_page} of {total_pages}")
+        self.btn_prev_page.setEnabled(self.current_page > 1)
+        self.btn_next_page.setEnabled(self.current_page < total_pages)
+
+        projects = {p.id: p.name for p in self.task_controller.get_all_projects()}
+
+        if not page_tasks:
+            state_panel = StatePanel(self)
+            state_panel.show_empty(
+                title="No completed tasks yet",
+                description="Tasks you finish will be archived here to track your achievements.",
+                icon="check_circle",
+            )
+            self.list_layout.addWidget(state_panel)
+            return
+
+        for task in page_tasks:
+            proj_name = projects.get(task.project_id, "Inbox")
+            widget = TaskItemWidget(task, project_name=proj_name, settings_manager=self.settings_manager)
+            widget.status_toggled.connect(self.task_controller.toggle_task_complete)
+            widget.edit_requested.connect(self.open_edit_dialog)
+            widget.delete_requested.connect(self.task_controller.delete_task)
+            self.list_layout.addWidget(widget)
+
+        self.list_layout.addStretch()
+
+    def open_edit_dialog(self, task_id: int):
+        task = self.task_controller.get_task(task_id)
+        if not task:
+            return
+        projects = self.task_controller.get_all_projects()
+        dlg = TaskDialog(projects, task, db_manager=self.db_manager, settings_manager=self.settings_manager, parent=self)
+        if dlg.exec() == TaskDialog.Accepted:
+            self.task_controller.update_task(dlg.get_task())

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "todo-bird"
+version = "1.0.1"
+description = "Offline Desktop Personal Assistant & Task Manager"
+readme = "todo_bird_app/README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Todo Bird Team" }
+]
+dependencies = [
+    "PySide6>=6.6.0",
+    "pyttsx3>=2.90",
+    "dbus-next>=0.2.3; sys_platform == 'linux'",
+]
+
+[project.scripts]
+todo-bird = "todo_bird_app.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["todo_bird_app*"]
+
+[tool.setuptools.package-data]
+todo_bird_app = [
+    "assets/**/*",
+    "themes/*",
+    "i18n/*",
+    "voice/**/*",
+]
+
+# Never ship the developer's personal databases or settings.
+# Packaged installs start with an empty DB and DEFAULT_CONFIG.
+[tool.setuptools.exclude-package-data]
+todo_bird_app = [
+    "data/*",
+    "config/*",
+    "logs/*",
+    "*.db",
+    "*.db-shm",
+    "*.db-wal",
+]

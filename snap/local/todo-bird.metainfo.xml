@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>todo-bird.desktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Proprietary</project_license>
+  <name>TODO BIRD</name>
+  <summary>Offline Desktop Personal Assistant &amp; Task Manager</summary>
+  <description>
+    <p>
+      TODO BIRD is an offline desktop personal assistant, interactive Gantt scheduler,
+      and task manager designed for privacy, focus, and local-first productivity.
+    </p>
+    <ul>
+      <li>Interactive WBS and Gantt scheduling engine</li>
+      <li>Comprehensive task and subtask status workflow</li>
+      <li>Local-first SQLite storage for complete privacy and data sovereignty</li>
+      <li>Avocet voice companion with local-time aware greetings</li>
+      <li>Dark and light modern neumorphic themes</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">todo-bird.desktop</launchable>
+  <categories>
+    <category>Utility</category>
+    <category>Office</category>
+    <category>ProjectManagement</category>
+  </categories>
+  <developer_name>Todo Bird Team</developer_name>
+  <content_rating type="oars-1.1" />
+</component>
