@@ -5,7 +5,12 @@ from pathlib import Path
 
 block_cipher = None
 
-root_dir = Path(__file__).resolve().parent.parent
+try:
+    spec_dir = Path(SPECPATH).resolve()
+except NameError:
+    spec_dir = Path.cwd() / 'windows'
+
+root_dir = spec_dir.parent if spec_dir.name.lower() == 'windows' else spec_dir
 
 datas = [
     (str(root_dir / 'todo_bird_app' / 'assets'), 'todo_bird_app/assets'),
