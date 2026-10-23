@@ -123,46 +123,46 @@ def build_msix():
     if token:
         try:
             print("Uploading MSIX to GitHub Releases...")
-        # Get release id
-        req = urllib.request.Request(
-            f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
-            headers={"Authorization": f"token {token}", "User-Agent": "TodoBird-MSIX-Packer"}
-        )
-        with urllib.request.urlopen(req) as resp:
-            rel_info = json.loads(resp.read().decode())
-            release_id = rel_info["id"]
+            # Get release id
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+                headers={"Authorization": f"token {token}", "User-Agent": "TodoBird-MSIX-Packer"}
+            )
+            with urllib.request.urlopen(req) as resp:
+                rel_info = json.loads(resp.read().decode())
+                release_id = rel_info["id"]
 
-        # Check if asset already exists and delete it
-        for asset in rel_info.get("assets", []):
-            if asset["name"] == "TodoBird-1.0.1.msix":
-                print(f"Deleting existing asset {asset['id']}...")
-                del_req = urllib.request.Request(
-                    f"https://api.github.com/repos/{repo}/releases/assets/{asset['id']}",
-                    headers={"Authorization": f"token {token}", "User-Agent": "TodoBird-MSIX-Packer"},
-                    method="DELETE"
-                )
-                urllib.request.urlopen(del_req)
+            # Check if asset already exists and delete it
+            for asset in rel_info.get("assets", []):
+                if asset["name"] == "TodoBird-1.0.1.msix":
+                    print(f"Deleting existing asset {asset['id']}...")
+                    del_req = urllib.request.Request(
+                        f"https://api.github.com/repos/{repo}/releases/assets/{asset['id']}",
+                        headers={"Authorization": f"token {token}", "User-Agent": "TodoBird-MSIX-Packer"},
+                        method="DELETE"
+                    )
+                    urllib.request.urlopen(del_req)
 
-        # Upload new asset
-        upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name=TodoBird-1.0.1.msix"
-        with open(out_msix, "rb") as f:
-            msix_bytes = f.read()
+            # Upload new asset
+            upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name=TodoBird-1.0.1.msix"
+            with open(out_msix, "rb") as f:
+                msix_bytes = f.read()
 
-        up_req = urllib.request.Request(
-            upload_url,
-            data=msix_bytes,
-            headers={
-                "Authorization": f"token {token}",
-                "Content-Type": "application/octet-stream",
-                "User-Agent": "TodoBird-MSIX-Packer"
-            },
-            method="POST"
-        )
-        with urllib.request.urlopen(up_req) as resp:
-            print("Successfully uploaded TodoBird-1.0.1.msix to GitHub Release v1.0.1!")
+            up_req = urllib.request.Request(
+                upload_url,
+                data=msix_bytes,
+                headers={
+                    "Authorization": f"token {token}",
+                    "Content-Type": "application/octet-stream",
+                    "User-Agent": "TodoBird-MSIX-Packer"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(up_req) as resp:
+                print("Successfully uploaded TodoBird-1.0.1.msix to GitHub Release v1.0.1!")
 
-    except Exception as e:
-        print(f"Notice: Release upload skipped or encountered error: {e}")
+        except Exception as e:
+            print(f"Notice: Release upload skipped or encountered error: {e}")
 
     return True
 
