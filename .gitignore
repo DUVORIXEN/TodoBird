@@ -31,11 +31,14 @@ temp*
 # Packaging and build artifacts
 *.snap
 *.deb
+*.msix
+windows/packages/
 deb/staging/
 flatpak/build-dir/
 flatpak/.flatpak-builder/
 .flatpak-builder/
 windows/dist/
+
 
 # IDE / Scratch files
 .vscode/
