@@ -80,3 +80,17 @@ coll = COLLECT(
     upx_exclude=[],
     name='TodoBird',
 )
+
+try:
+    if sys.platform == 'win32':
+        import importlib.util
+        msix_script = root_dir / 'windows' / 'build_msix.py'
+        if msix_script.exists():
+            print(f"Triggering MSIX packaging via {msix_script}...")
+            spec = importlib.util.spec_from_file_location("build_msix", str(msix_script))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.build_msix()
+except Exception as e:
+    print(f"Notice: MSIX post-build step returned: {e}")
+
