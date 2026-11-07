@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TODO BIRD — Offline Executive Project Manager, WBS &amp; CPM Gantt Scheduler</title>
+  <meta name="description" content="100% offline, local-first desktop project manager with interactive WBS hierarchy, Critical Path (CPM) Gantt scheduling, Pomodoro focus timer, and Avocet AI voice assistant for Windows &amp; Ubuntu Linux." />
+  <meta name="keywords" content="Todo Bird, offline Gantt chart, WBS project management, Critical Path Method software, local-first task manager, privacy project planner, Windows project manager, Ubuntu Linux Gantt chart, DUVORIXEN" />
+  <meta property="og:title" content="TODO BIRD — Offline Executive WBS &amp; CPM Gantt Project Manager" />
+  <meta property="og:description" content="Zero cloud lock-in. Interactive WBS, Critical Path Gantt scheduling, Focus Timer, and Avocet Voice Companion for Windows &amp; Linux." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://duvorixen.github.io/TodoBird/" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="TODO BIRD v1.0.2 — Offline Executive WBS &amp; Gantt Scheduler" />
+  <meta name="twitter:description" content="100% local SQLite privacy, Critical Path (CPM) Gantt engine, Focus Timer, and Voice Assistant. Available on Microsoft Store &amp; Ubuntu Snap Store." />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "TODO BIRD",
+    "operatingSystem": "Windows 10, Windows 11, Ubuntu Linux, Debian Linux",
+    "applicationCategory": "BusinessApplication",
+    "softwareVersion": "1.0.2",
+    "offers": {
+      "@type": "Offer",
+      "price": "199",
+      "priceCurrency": "INR",
+      "url": "https://razorpay.me/@duvorixen"
+    },
+    "author": {
+      "@type": "Organization",
+      "name": "DUVORIXEN"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card: #131b2e;
+      --card-border: #1e293b;
+      --accent: #38bdf8;
+      --accent-2: #6366f1;
+      --gold: #f59e0b;
+      --emerald: #10b981;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #172554 0%, var(--bg) 55%);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    a { color: inherit; text-decoration: none; }
+    .container { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(11, 15, 25, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+    }
+    .nav {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 72px;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 12px;
+      font-weight: 800; font-size: 1.25rem; letter-spacing: 0.5px;
+    }
+    .brand-badge {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff; font-size: 0.75rem; padding: 3px 10px; border-radius: 999px;
+    }
+    .nav-links { display: flex; gap: 20px; align-items: center; font-size: 0.95rem; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 12px 22px; border-radius: 10px; font-weight: 700;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      cursor: pointer; border: 1px solid transparent;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn-primary {
+      background: linear-gradient(135deg, #2563eb, #4f46e5);
+      color: #fff;
+      box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.5);
+    }
+    .btn-gold {
+      background: linear-gradient(135deg, #f59e0b, #ea580c);
+      color: #fff;
+      box-shadow: 0 10px 25px -5px rgba(245, 158, 11, 0.45);
+    }
+    .btn-outline {
+      background: rgba(30, 41, 59, 0.7);
+      border-color: #334155; color: var(--text);
+    }
+    .hero {
+      padding: 84px 0 56px; text-align: center;
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: var(--accent);
+      padding: 6px 16px; border-radius: 999px; font-size: 0.85rem; font-weight: 600;
+      margin-bottom: 24px;
+    }
+    h1 {
+      font-size: clamp(2.4rem, 5vw, 4rem);
+      line-height: 1.12; font-weight: 900;
+      margin-bottom: 20px;
+      background: linear-gradient(to right, #ffffff, #93c5fd, #c7d2fe);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      max-width: 760px; margin: 0 auto 36px;
+      font-size: 1.2rem; color: var(--muted);
+    }
+    .cta-grid {
+      display: flex; flex-wrap: wrap; gap: 14px; justify-content: center;
+      margin-bottom: 28px;
+    }
+    .stats-bar {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 32px;
+      margin-top: 40px; padding: 20px 28px;
+      background: rgba(19, 27, 46, 0.8);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+    }
+    .stat-item { text-align: center; }
+    .stat-num { font-size: 1.65rem; font-weight: 800; color: var(--accent); }
+    .stat-label { font-size: 0.82rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+    .section { padding: 64px 0; }
+    .section-title {
+      text-align: center; font-size: 2.1rem; font-weight: 800; margin-bottom: 12px;
+    }
+    .section-sub {
+      text-align: center; color: var(--muted); max-width: 680px; margin: 0 auto 44px;
+    }
+    .grid-3 {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px; padding: 28px;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .card.featured {
+      border: 2px solid var(--gold);
+      box-shadow: 0 20px 40px -15px rgba(245, 158, 11, 0.25);
+      position: relative;
+    }
+    .popular-tag {
+      position: absolute; top: -13px; right: 24px;
+      background: var(--gold); color: #000; font-weight: 800; font-size: 0.75rem;
+      padding: 4px 12px; border-radius: 999px; text-transform: uppercase;
+    }
+    .card h3 { font-size: 1.3rem; margin-bottom: 10px; }
+    .card p { color: var(--muted); font-size: 0.95rem; margin-bottom: 16px; }
+    .price { font-size: 2.3rem; font-weight: 900; margin: 12px 0; }
+    .price span { font-size: 0.95rem; color: var(--muted); font-weight: 500; }
+    .feature-list { list-style: none; margin: 16px 0 24px; }
+    .feature-list li {
+      padding: 6px 0; font-size: 0.93rem; color: #cbd5e1;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .feature-list li::before { content: "✓"; color: var(--emerald); font-weight: 900; }
+    .share-strip {
+      text-align: center; background: rgba(30, 41, 59, 0.5);
+      border: 1px solid var(--card-border); border-radius: 16px;
+      padding: 32px; margin-top: 32px;
+    }
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 40px 0; text-align: center; color: var(--muted); font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav">
+      <div class="brand">
+        <span>🦅 TODO BIRD</span>
+        <span class="brand-badge">v1.0.2 LIVE</span>
+      </div>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#pricing">Pro Pass (Razorpay)</a>
+        <a href="#download">Downloads</a>
+        <a class="btn btn-gold" href="https://razorpay.me/@duvorixen" target="_blank" rel="noopener">★ Get Pro Pass</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero" id="download">
+      <div class="pill">🔒 100% Offline • Local SQLite • Zero Cloud Lock-In</div>
+      <h1>Executive Project Management &amp; Critical Path Gantt Scheduling</h1>
+      <p class="subtitle">
+        Plan complex engineering, product, and personal roadmaps with an interactive Work Breakdown Structure (WBS),
+        automated Critical Path Method (CPM) Gantt engine, Focus Timer, Multi-Zone World Clock, and Avocet Voice Companion.
+      </p>
+
+      <div class="cta-grid">
+        <a class="btn btn-primary" href="https://apps.microsoft.com/detail/9NLG9JSMCMDG" target="_blank" rel="noopener">
+          🪟 Get on Microsoft Store
+        </a>
+        <a class="btn btn-outline" href="https://github.com/DUVORIXEN/TodoBird/releases/download/v1.0.2/TodoBird-Setup-1.0.2.exe">
+          ⬇ Windows Installer (.exe)
+        </a>
+        <a class="btn btn-primary" href="https://snapcraft.io/todo-bird" target="_blank" rel="noopener">
+          🐧 Ubuntu Snap Store
+        </a>
+        <a class="btn btn-outline" href="https://github.com/DUVORIXEN/TodoBird/releases/download/v1.0.2/todo-bird_1.0.2_amd64.deb">
+          ⬇ Ubuntu / Debian (.deb)
+        </a>
+      </div>
+
+      <div class="stats-bar">
+        <div class="stat-item">
+          <div class="stat-num">100%</div>
+          <div class="stat-label">Local SQLite Privacy</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">10</div>
+          <div class="stat-label">Global Languages</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num" id="gh-downloads">Live v1.0.2</div>
+          <div class="stat-label">Verified Store &amp; GitHub Builds</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">★ 5.0</div>
+          <div class="stat-label">Built-In Guided Onboarding</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <h2 class="section-title">Why Engineers, Founders &amp; PMs Switch to TODO BIRD</h2>
+      <p class="section-sub">Stop paying $20/month per seat for slow browser tabs that leak your roadmap to the cloud.</p>
+      <div class="grid-3">
+        <div class="card">
+          <div>
+            <h3>📊 Interactive WBS &amp; CPM Gantt</h3>
+            <p>Full parent-child Work Breakdown Structure with automatic Critical Path calculation, slack analysis, and dependency scheduling.</p>
+          </div>
+          <ul class="feature-list">
+            <li>Auto-propagated parent rollups</li>
+            <li>Critical path highlighting</li>
+            <li>1-Click Sample Executive Project</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div>
+            <h3>🎙️ Avocet Voice &amp; Deep Focus</h3>
+            <p>Offline neural voice companion greets you on schedule, reads briefings, and pairs with an integrated Pomodoro Focus Timer.</p>
+          </div>
+          <ul class="feature-list">
+            <li>Time-aware spoken briefings</li>
+            <li>Pomodoro &amp; stopwatch telemetry</li>
+            <li>Multi-timezone World Clock bar</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div>
+            <h3>🧭 Guided Tour &amp; F1 Manual</h3>
+            <p>Master every workflow in 60 seconds with the 7-step Spotlight Onboarding Tour and searchable 8-chapter User Manual.</p>
+          </div>
+          <ul class="feature-list">
+            <li>Interactive Spotlight Tour</li>
+            <li>Instant Command Palette (Ctrl+K)</li>
+            <li>Dark &amp; Light Neumorphic Themes</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="pricing">
+      <h2 class="section-title">Unlock TODO BIRD Pro Supporter Pass</h2>
+      <p class="section-sub">Support independent offline software via Razorpay and activate your Supporter Star Badge (★) inside the app.</p>
+      <div class="grid-3">
+        <div class="card">
+          <div>
+            <h3>☕ Early Bird Supporter</h3>
+            <div class="price">₹199 <span>/ $3 one-time</span></div>
+            <p>Perfect for students, indie hackers, and individual power users.</p>
+            <ul class="feature-list">
+              <li>In-App Gold Supporter Star Badge (★)</li>
+              <li>All v1.x Offline WBS &amp; Gantt Features</li>
+              <li>Priority Feature Voting on GitHub Wall</li>
+            </ul>
+          </div>
+          <a class="btn btn-outline" href="https://razorpay.me/@duvorixen" target="_blank" rel="noopener"> Unlock via Razorpay →</a>
+        </div>
+
+        <div class="card featured">
+          <div class="popular-tag">Most Popular</div>
+          <div>
+            <h3>🚀 Pro Lifetime Pass</h3>
+            <div class="price">₹499 <span>/ $7 one-time</span></div>
+            <p>Complete lifetime supporter license for professionals, PMs, and executives.</p>
+            <ul class="feature-list">
+              <li>Everything in Early Bird Supporter</li>
+              <li>Lifetime Pro Supporter Badge (★)</li>
+              <li>Priority Bug &amp; Workflow Requests</li>
+              <li>Direct Founder Community Check-In</li>
+            </ul>
+          </div>
+          <a class="btn btn-gold" href="https://razorpay.me/@duvorixen" target="_blank" rel="noopener">★ Buy Pro Pass on Razorpay</a>
+        </div>
+
+        <div class="card">
+          <div>
+            <h3>🏢 Team / Studio Pack (5 Seats)</h3>
+            <div class="price">₹999 <span>/ $15 one-time</span></div>
+            <p>Equip your engineering or operations team with 100% air-gapped local planning.</p>
+            <ul class="feature-list">
+              <li>Up to 5 Team Workstations (.msix / .deb / .snap)</li>
+              <li>Custom Webhook Telemetry Integration</li>
+              <li>Dedicated Onboarding &amp; Template Support</li>
+            </ul>
+          </div>
+          <a class="btn btn-primary" href="https://razorpay.me/@duvorixen" target="_blank" rel="noopener">Get Team Pack on Razorpay →</a>
+        </div>
+      </div>
+
+      <div class="share-strip">
+        <h3>Spread the Word &amp; Help Us Reach 20,000 Pro Users</h3>
+        <p style="color: var(--muted); margin: 8px 0 18px;">Share TODO BIRD with your engineering team, LinkedIn network, or Linux/Windows community:</p>
+        <div class="cta-grid" style="margin-bottom: 0;">
+          <a class="btn btn-outline" target="_blank" rel="noopener"
+             href="https://twitter.com/intent/tweet?text=Just%20tried%20TODO%20BIRD%20v1.0.2%20%E2%80%94%20a%20100%25%20offline%20WBS%20%26%20Critical%20Path%20Gantt%20project%20manager%20for%20Windows%20%26%20Ubuntu%20Linux!%20Zero%20cloud%20lock-in.&url=https%3A%2F%2Fgithub.com%2FDUVORIXEN%2FTodoBird">
+            🐦 Share on X / Twitter
+          </a>
+          <a class="btn btn-outline" target="_blank" rel="noopener"
+             href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2FDUVORIXEN%2FTodoBird">
+            💼 Share on LinkedIn
+          </a>
+          <a class="btn btn-outline" target="_blank" rel="noopener"
+             href="https://reddit.com/submit?url=https%3A%2F%2Fgithub.com%2FDUVORIXEN%2FTodoBird&title=TODO%20BIRD%20v1.0.2%3A%20Offline%20WBS%20%26%20Critical%20Path%20Gantt%20Project%20Manager%20for%20Windows%20and%20Linux">
+            🔥 Post on Reddit
+          </a>
+          <a class="btn btn-outline" target="_blank" rel="noopener"
+             href="https://api.whatsapp.com/send?text=Check%20out%20TODO%20BIRD%20%E2%80%94%20100%25%20offline%20WBS%20%26%20Gantt%20Project%20Manager%20for%20Windows%20%26%20Ubuntu%3A%20https%3A%2F%2Fgithub.com%2FDUVORIXEN%2FTodoBird">
+            💬 Share on WhatsApp
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>© 2026 DUVORIXEN • Built for 100% Local Data Sovereignty • <a href="https://github.com/DUVORIXEN/TodoBird" style="color: var(--accent);">GitHub Repository</a> • <a href="https://razorpay.me/@duvorixen" style="color: var(--gold);">Razorpay Supporter Portal</a></p>
+    </div>
+  </footer>
+
+  <script>
+    fetch("https://api.github.com/repos/DUVORIXEN/TodoBird/releases")
+      .then(r => r.json())
+      .then(releases => {
+        if (!Array.isArray(releases)) return;
+        let total = 0;
+        releases.forEach(rel => (rel.assets || []).forEach(a => total += (a.download_count || 0)));
+        if (total > 0) {
+          document.getElementById("gh-downloads").textContent = total.toLocaleString() + "+ Downloads";
+        }
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>
