@@ -550,6 +550,7 @@ class SidebarWidget(QWidget):
         ("daily_review", "Daily Review", "search"),
         ("feedback", "Pilot Feedback", "chat"),
         ("world_clock", "World Clock", "globe"),
+        ("user_manual", "User Manual", "book"),
         ("settings", "Settings", "settings"),
     ]
 

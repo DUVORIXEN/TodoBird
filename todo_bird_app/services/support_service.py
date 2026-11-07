@@ -26,8 +26,23 @@ class SupportService:
         self.db = db_manager
 
     def get_support_url(self) -> str:
-        """Returns the canonical HTTPS URL for supporting Todo Bird."""
+        """Returns the canonical HTTPS URL for supporting Todo Bird via Razorpay."""
+        if self.SUPPORT_URL != "https://razorpay.me/@duvorixen":
+            return self.SUPPORT_URL
+        custom_url = self.settings.get("razorpay_support_url", "") if self.settings else ""
+        if custom_url and isinstance(custom_url, str) and custom_url.strip():
+            return custom_url.strip()
         return self.SUPPORT_URL
+
+    def set_support_url(self, url: str) -> bool:
+        """Updates the configured Razorpay support URL (must be HTTPS)."""
+        cleaned = str(url or "").strip()
+        if not cleaned.startswith("https://"):
+            return False
+        self.SUPPORT_URL = cleaned
+        if self.settings:
+            self.settings.set("razorpay_support_url", cleaned)
+        return True
 
     def record_support_prompt_shown(self):
         """Records the timestamp of the last automatic prompt."""

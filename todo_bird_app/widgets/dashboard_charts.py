@@ -526,6 +526,12 @@ class AnimatedDashboardChart(QWidget):
             return c
         return base_color
 
+    def _selection_pen(self, width: float = 2.0, alpha: int = 255) -> QPen:
+        """Theme-aware selection ring: fixed white vanishes on light surfaces."""
+        base = self.foreground_color()
+        base.setAlpha(alpha)
+        return QPen(base, width)
+
     def _draw_focus_ring(self, painter: QPainter):
         """Draws subtle widget focus indicator when focused via keyboard."""
         if self.hasFocus():

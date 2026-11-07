@@ -159,6 +159,10 @@ class CommandPalette(QDialog):
 
         actions = [
             ("Create New Task...", "action:create_task", "Open task creation dialog"),
+            ("Start Interactive Teaching Tour", "action:start_tour", "Launch guided spotlight walkthrough"),
+            ("Open User Manual & Guide", "nav:user_manual", "Searchable feature manual & shortcuts"),
+            ("Support Todo Bird (Razorpay)", "action:open_support", "Support development via Razorpay"),
+            ("Share Feedback & Rate App", "nav:feedback", "Tell us how you feel about Todo Bird"),
             ("Open World Clock", "action:open_world_clock", "View multi-country global clocks"),
             ("Go to World Clock View", "nav:world_clock", "View full world clock planner"),
             ("Go to Gantt View", "nav:gantt", "View Gantt timeline"),
@@ -204,6 +208,10 @@ class CommandPalette(QDialog):
         # 1. Matching Built-in Commands
         default_commands = [
             ("Create New Task...", "action:create_task", "Open task creation dialog"),
+            ("Start Interactive Teaching Tour", "action:start_tour", "Launch guided spotlight walkthrough"),
+            ("Open User Manual & Guide", "nav:user_manual", "Searchable feature manual & shortcuts"),
+            ("Support Todo Bird (Razorpay)", "action:open_support", "Support development via Razorpay"),
+            ("Share Feedback & Rate App", "nav:feedback", "Tell us how you feel about Todo Bird"),
             ("Open World Clock", "action:open_world_clock", "View multi-country global clocks"),
             ("Go to World Clock View", "nav:world_clock", "View full world clock planner"),
             ("Go to Gantt View", "nav:gantt", "View Gantt timeline"),

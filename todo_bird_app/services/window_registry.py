@@ -201,3 +201,10 @@ class WindowRegistry:
         cls._registered_windows.clear()
         cls._role_map.clear()
         cls._reminder_resize_listeners.clear()
+        try:
+            from PySide6.QtCore import QEvent
+            app = QApplication.instance()
+            if app:
+                app.sendPostedEvents(None, QEvent.DeferredDelete)
+        except Exception:
+            pass

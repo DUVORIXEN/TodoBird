@@ -17,8 +17,9 @@ SECTION_INFO = {
     "gantt": ("Gantt Timeline", "Interactive timeline & Plan vs Actual comparison"),
     "analytics": ("Productivity Analytics", "Track execution rates, completion trends & efficiency"),
     "daily_review": ("Daily Review", "Morning planning & Evening Plan vs Actual review"),
-    "feedback": ("Pilot Feedback", "Parallel Pilot Issue Tracker & Diagnostic Export"),
+    "feedback": ("User Feedback & Community Pulse", "Share how you feel, community check-in & store analytics"),
     "world_clock": ("World Clock & Timezone Planner", "Multi-country global time tracking & meeting overlap finder"),
+    "user_manual": ("User Manual & Interactive Guide", "Complete feature walkthrough, workflows & keyboard shortcuts"),
     "settings": ("Preferences & Settings", "Theme, Voice, Companion, and Systemd Shutdown Guard"),
 }
 

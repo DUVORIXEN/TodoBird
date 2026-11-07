@@ -11,6 +11,9 @@ class HeaderBarWidget(QWidget):
     toggle_theme_requested = Signal()
     world_clock_requested = Signal()
     support_requested = Signal()
+    feedback_requested = Signal()
+    user_manual_requested = Signal()
+    onboarding_tour_requested = Signal()
     diagnostics_requested = Signal()
     about_requested = Signal()
     language_selected = Signal(str)
@@ -20,12 +23,13 @@ class HeaderBarWidget(QWidget):
         self.setObjectName("HeaderBar")
         self.setMinimumHeight(52)
         self._current_theme_mode = "dark"
+        self._is_supporter = False
         self._init_ui()
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 0, 16, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         # Title & Subtitle container
         titles_layout = QHBoxLayout()
@@ -43,6 +47,8 @@ class HeaderBarWidget(QWidget):
 
         layout.addLayout(titles_layout, 1)
 
+        from todo_bird_app.services.icon_service import IconService as _IconService
+
         # Quick Add Button
         self.add_btn = QPushButton(t("+  New Task"))
         self.add_btn.setObjectName("PrimaryButton")
@@ -51,7 +57,6 @@ class HeaderBarWidget(QWidget):
         layout.addWidget(self.add_btn)
 
         # Language Button — one click to switch UI language from anywhere
-        # (top-right easy-access cluster, before World Clock).
         self.language_btn = QPushButton()
         self.language_btn.setObjectName("LanguageButton")
         self.language_btn.setCursor(Qt.PointingHandCursor)
@@ -64,7 +69,6 @@ class HeaderBarWidget(QWidget):
 
         # World Clock Button
         self.clock_btn = QPushButton(t("World Clock"))
-        from todo_bird_app.services.icon_service import IconService as _IconService
         self.clock_btn.setIcon(_IconService.get_icon("globe", "#9AA6BD"))
         self.clock_btn.setIconSize(QSize(16, 16))
         self.clock_btn.setObjectName("WorldClockButton")
@@ -73,21 +77,62 @@ class HeaderBarWidget(QWidget):
         self.clock_btn.clicked.connect(self.world_clock_requested.emit)
         layout.addWidget(self.clock_btn)
 
+        # Razorpay Support Button — directly beside World Clock Button
+        self.razorpay_btn = QPushButton(t("Razorpay"))
+        self.razorpay_btn.setIcon(_IconService.get_icon("heart", "#F43F5E"))
+        self.razorpay_btn.setIconSize(QSize(16, 16))
+        self.razorpay_btn.setObjectName("RazorpaySupportButton")
+        self.razorpay_btn.setCursor(Qt.PointingHandCursor)
+        self.razorpay_btn.setToolTip(t("Support Todo Bird via Razorpay (https://razorpay.me/@duvorixen)"))
+        self.razorpay_btn.clicked.connect(self.support_requested.emit)
+        layout.addWidget(self.razorpay_btn)
+
+        # Feedback & Rating Button — quick access to share how users feel
+        self.feedback_btn = QPushButton(t("Feedback"))
+        self.feedback_btn.setIcon(_IconService.get_icon("chat", "#9AA6BD"))
+        self.feedback_btn.setIconSize(QSize(16, 16))
+        self.feedback_btn.setObjectName("HeaderFeedbackButton")
+        self.feedback_btn.setCursor(Qt.PointingHandCursor)
+        self.feedback_btn.setToolTip(t("Share how you feel about Todo Bird & view community pulse"))
+        self.feedback_btn.clicked.connect(self.feedback_requested.emit)
+        layout.addWidget(self.feedback_btn)
+
+        # User Guide / Teaching Manual Button
+        self.guide_btn = QPushButton(t("Guide"))
+        self.guide_btn.setIcon(_IconService.get_icon("book", "#9AA6BD"))
+        self.guide_btn.setIconSize(QSize(16, 16))
+        self.guide_btn.setObjectName("HeaderGuideButton")
+        self.guide_btn.setCursor(Qt.PointingHandCursor)
+        self.guide_btn.setToolTip(t("Open User Manual & Interactive Teaching Tour (F1)"))
+        self.guide_btn.clicked.connect(self.user_manual_requested.emit)
+        layout.addWidget(self.guide_btn)
+
         # Theme Toggle Button
         self.theme_btn = QPushButton(t("Mode"))
         self.theme_btn.setCursor(Qt.PointingHandCursor)
         self.theme_btn.clicked.connect(self.toggle_theme_requested.emit)
         layout.addWidget(self.theme_btn)
-        
+
         # Help Menu Button
         self.help_btn = QToolButton()
         self.help_btn.setText("? Help")
         self.help_btn.setCursor(Qt.PointingHandCursor)
         self.help_btn.setPopupMode(QToolButton.InstantPopup)
-        
+
         self.help_menu = QMenu(self.help_btn)
-        
-        self.action_support = self.help_menu.addAction(t("Support Todo Bird"))
+
+        self.action_user_manual = self.help_menu.addAction(t("📖 User Manual & Guide (F1)"))
+        self.action_user_manual.triggered.connect(self.user_manual_requested.emit)
+
+        self.action_tour = self.help_menu.addAction(t("🧭 Interactive Teaching Tour"))
+        self.action_tour.triggered.connect(self.onboarding_tour_requested.emit)
+
+        self.help_menu.addSeparator()
+
+        self.action_feedback = self.help_menu.addAction(t("💬 Share Feedback & Rating"))
+        self.action_feedback.triggered.connect(self.feedback_requested.emit)
+
+        self.action_support = self.help_menu.addAction(t("💜 Support Todo Bird (Razorpay)"))
         self.action_support.triggered.connect(self.support_requested.emit)
 
         self.help_menu.addSeparator()
@@ -97,13 +142,23 @@ class HeaderBarWidget(QWidget):
 
         self.action_about = self.help_menu.addAction(t("About"))
         self.action_about.triggered.connect(self.about_requested.emit)
-        
+
         self.help_btn.setMenu(self.help_menu)
         layout.addWidget(self.help_btn)
 
     def set_section_title(self, title: str, subtitle: str = ""):
         self.title_label.setText(title)
         self.subtitle_label.setText(f"— {subtitle}" if subtitle else "")
+
+    def set_supporter_badge(self, is_supporter: bool):
+        """Updates the Razorpay button to display a Supporter star badge when enabled."""
+        self._is_supporter = bool(is_supporter)
+        base_lbl = t("Razorpay")
+        self.razorpay_btn.setText(f"{base_lbl} ★" if self._is_supporter else base_lbl)
+        if self._is_supporter:
+            self.razorpay_btn.setToolTip(t("Thank you for being a Todo Bird Supporter! 💜 (Razorpay)"))
+        else:
+            self.razorpay_btn.setToolTip(t("Support Todo Bird via Razorpay (https://razorpay.me/@duvorixen)"))
 
     # ------------------------------------------------------------------
     # Language selection & live retranslation
@@ -137,6 +192,13 @@ class HeaderBarWidget(QWidget):
         self.add_btn.setText(t("+  New Task"))
         self.clock_btn.setText(t("World Clock"))
         self.clock_btn.setToolTip(t("Open World Clock (Ctrl+Alt+W)"))
+        base_lbl = t("Razorpay")
+        self.razorpay_btn.setText(f"{base_lbl} ★" if self._is_supporter else base_lbl)
+        self.razorpay_btn.setToolTip(t("Support Todo Bird via Razorpay (https://razorpay.me/@duvorixen)"))
+        self.feedback_btn.setText(t("Feedback"))
+        self.feedback_btn.setToolTip(t("Share how you feel about Todo Bird & view community pulse"))
+        self.guide_btn.setText(t("Guide"))
+        self.guide_btn.setToolTip(t("Open User Manual & Interactive Teaching Tour (F1)"))
         self.language_btn.setToolTip(t("UI Language"))
         self._refresh_language_button_text()
         self._rebuild_language_menu()

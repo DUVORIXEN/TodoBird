@@ -93,7 +93,7 @@ def build_msix():
         priconfig_path.unlink()
 
     # Package with MakeAppx
-    out_msix = project_root / "dist" / "TodoBird-1.0.1.msix"
+    out_msix = project_root / "dist" / "TodoBird-1.0.2.msix"
     out_msix.parent.mkdir(parents=True, exist_ok=True)
     print(f"Packing MSIX to {out_msix}...")
     subprocess.run([
@@ -107,7 +107,7 @@ def build_msix():
     print(f"SUCCESS: Created {out_msix} ({size_mb} MB)")
 
     # Also place a copy inside dist/TodoBird so it gets bundled into TodoBird-Portable-x64.zip
-    portable_dest = dist_dir / "TodoBird-1.0.1.msix"
+    portable_dest = dist_dir / "TodoBird-1.0.2.msix"
     try:
         shutil.copy2(out_msix, portable_dest)
         print(f"Copied MSIX to portable folder: {portable_dest}")
@@ -118,7 +118,7 @@ def build_msix():
     # Upload to GitHub Release if token is available in environment
     token = os.environ.get("GITHUB_TOKEN")
     repo = "DUVORIXEN/TodoBird"
-    tag = "v1.0.1"
+    tag = "v1.0.2"
 
     if token:
         try:
@@ -134,7 +134,7 @@ def build_msix():
 
             # Check if asset already exists and delete it
             for asset in rel_info.get("assets", []):
-                if asset["name"] == "TodoBird-1.0.1.msix":
+                if asset["name"] == "TodoBird-1.0.2.msix":
                     print(f"Deleting existing asset {asset['id']}...")
                     del_req = urllib.request.Request(
                         f"https://api.github.com/repos/{repo}/releases/assets/{asset['id']}",
@@ -144,7 +144,7 @@ def build_msix():
                     urllib.request.urlopen(del_req)
 
             # Upload new asset
-            upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name=TodoBird-1.0.1.msix"
+            upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name=TodoBird-1.0.2.msix"
             with open(out_msix, "rb") as f:
                 msix_bytes = f.read()
 

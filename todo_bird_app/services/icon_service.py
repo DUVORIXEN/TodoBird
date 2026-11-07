@@ -35,6 +35,7 @@ class IconService:
         "refresh", "pin", "folder", "summary", "task", "file", "home",
         "inbox", "tray", "star", "target", "calendar", "check_circle",
         "chart", "chat", "globe", "bell", "clock", "sun", "moon",
+        "heart", "book", "compass",
     })
 
     @classmethod
@@ -370,6 +371,54 @@ class IconService:
             path.quadTo(x + w * 0.70, y + h * 0.92, x + w * 0.52, y + h * 0.88)
             path.quadTo(x + w * 0.14, y + h * 0.72, x + w * 0.26, y + h * 0.34)
             path.quadTo(x + w * 0.36, y + h * 0.14, x + w * 0.62, y + h * 0.14)
+
+        elif icon_name == "heart":
+            # Heart icon for Support / Razorpay
+            path.moveTo(cx, y + h * 0.84)
+            path.cubicTo(
+                x + w * 0.12, y + h * 0.60,
+                x + w * 0.10, y + h * 0.24,
+                x + w * 0.32, y + h * 0.22,
+            )
+            path.cubicTo(
+                x + w * 0.44, y + h * 0.21,
+                cx, y + h * 0.32,
+                cx, y + h * 0.36,
+            )
+            path.cubicTo(
+                cx, y + h * 0.32,
+                x + w * 0.56, y + h * 0.21,
+                x + w * 0.68, y + h * 0.22,
+            )
+            path.cubicTo(
+                x + w * 0.90, y + h * 0.24,
+                x + w * 0.88, y + h * 0.60,
+                cx, y + h * 0.84,
+            )
+            path.closeSubpath()
+
+        elif icon_name == "book":
+            # Open book / User Manual icon
+            path.moveTo(cx, y + h * 0.24)
+            path.quadTo(x + w * 0.32, y + h * 0.18, x + w * 0.14, y + h * 0.24)
+            path.lineTo(x + w * 0.14, y + h * 0.78)
+            path.quadTo(x + w * 0.32, y + h * 0.72, cx, y + h * 0.78)
+            path.moveTo(cx, y + h * 0.24)
+            path.quadTo(x + w * 0.68, y + h * 0.18, x + w * 0.86, y + h * 0.24)
+            path.lineTo(x + w * 0.86, y + h * 0.78)
+            path.quadTo(x + w * 0.68, y + h * 0.72, cx, y + h * 0.78)
+            path.moveTo(cx, y + h * 0.24)
+            path.lineTo(cx, y + h * 0.78)
+
+        elif icon_name == "compass":
+            # Compass / Guided Tour icon
+            r = min(w, h) * 0.38
+            path.addEllipse(QPointF(cx, cy), r, r)
+            path.moveTo(cx + w * 0.16, cy - h * 0.16)
+            path.lineTo(cx + w * 0.05, cy + h * 0.05)
+            path.lineTo(cx - w * 0.16, cy + h * 0.16)
+            path.lineTo(cx - w * 0.05, cy - h * 0.05)
+            path.closeSubpath()
 
         else:
             # Fallback circle

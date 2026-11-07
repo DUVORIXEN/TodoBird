@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.2 — Onboarding Tour, User Manual, Razorpay Bar & Community Pulse (2026-11-07)
+
+- **First-Time Interactive Spotlight Teaching Tour (`OnboardingTeachingOverlay`)**:
+  7-step interactive walkthrough with live UI target spotlighting, quick name/country personalization, and 1-click live section switching.
+- **Searchable In-App User Manual (`UserManualView`)**:
+  8 comprehensive chapters + global keyboard shortcut cheat-sheet accessible via Header Bar `Guide`, Sidebar `User Manual`, `F1`, or `Ctrl+K`.
+- **1-Click Sample Executive Project (`SampleProjectService`)**:
+  Instant demo workspace with multi-level WBS subtasks, dependencies, and Plan vs. Actual Gantt bars (plus 1-click cleanup).
+- **Razorpay Support Bar & Phone QR Code (`HeaderBarWidget`, `SupportTodoBirdDialog`, `QRCodeWidget`)**:
+  Prominent `Razorpay` button directly beside `World Clock` in the Header Bar, pure-Python ISO/IEC 18004 scannable QR code, quick contribution tiers, editable link, and Supporter Star Badge (`★`).
+- **User Sentiment, Community Check-In & Live Store Analytics (`PilotFeedbackView`, `PilotIssueLogger`, `MilestonePulseBanner`)**:
+  5-star ratings, mood selector, user check-in (Name, Role, Country, Auto-Detected Store Channel), 1-click GitHub Community Wall submission, HTTPS Webhook delivery, celebratory 3-task Milestone Pulse Banner, and live GitHub Release download counter.
+- **Full 11-Language Localization**:
+  Updated all 10 translation files (`te`, `hi`, `es`, `fr`, `de`, `ja`, `zh_cn`, `ar`, `pt`, `ru`) for the new Header Bar and navigation controls.
+
 ## 1.0.0 — Public Release (2026-09-26)
 
 First public release of Todo Bird. This build follows the 0.9.0 beta series,

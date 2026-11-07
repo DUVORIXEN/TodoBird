@@ -90,6 +90,13 @@ DEFAULT_CONFIG = {
     "description_font_size": 13,
     "description_font_color_mode": "auto",   # auto | custom
     "description_font_color": "#0F172A",
+    "onboarding_completed": False,
+    "milestone_pulse_completed": False,
+    "is_todo_bird_supporter": False,
+    "razorpay_support_url": "https://razorpay.me/@duvorixen",
+    "feedback_webhook_url": "",
+    "user_display_name": "",
+    "user_country": "",
 }
 
 class SettingsManager:

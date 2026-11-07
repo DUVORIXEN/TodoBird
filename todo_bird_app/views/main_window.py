@@ -37,6 +37,9 @@ from todo_bird_app.views.pilot_feedback_view import PilotFeedbackView
 from todo_bird_app.views.calendar_view import CalendarView
 from todo_bird_app.views.analytics_view import AnalyticsView
 from todo_bird_app.views.world_clock_view import WorldClockView
+from todo_bird_app.views.user_manual_view import UserManualView
+from todo_bird_app.widgets.onboarding_tour import OnboardingTeachingOverlay
+from todo_bird_app.widgets.milestone_pulse_banner import MilestonePulseBanner
 from todo_bird_app.ui.background_overlay import BackgroundOverlayWidget
 from todo_bird_app.services.language_service import LanguageService
 from todo_bird_app.services.companion_service import CompanionService
@@ -56,6 +59,8 @@ class MainWindow(QMainWindow):
         self.task_controller = TaskController(self.db_manager)
         self.startup_reminder_dialogs: list = []
         self._world_clock_popover = None
+        self.onboarding_overlay = None
+        self.milestone_pulse_banner = None
         self.support_service = SupportService(self.settings_manager, self.db_manager)
 
         app = QApplication.instance()
@@ -113,6 +118,9 @@ class MainWindow(QMainWindow):
 
         # Startup Greeting evaluation
         self._evaluate_startup_greeting()
+
+        # First-Time Interactive Teaching Tour evaluation
+        self._evaluate_first_time_onboarding()
 
         # Apply font density AFTER UI is fully created to ensure child widgets scale correctly
         self.apply_font_density(self.settings_manager.get("font_density", "comfortable"))
@@ -178,6 +186,16 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+Alt+W",
             scope="global",
             tooltip="Open the interactive World Clock",
+            parent=self,
+            allow_override=True,
+        )
+        reg.register(
+            command_id="open_user_manual",
+            display_name="User Manual & Guide",
+            callback=lambda: self.navigation_controller.set_active_section("user_manual"),
+            shortcut="F1",
+            scope="global",
+            tooltip="Open the searchable User Manual & Interactive Guide",
             parent=self,
             allow_override=True,
         )
@@ -275,10 +293,16 @@ class MainWindow(QMainWindow):
         self.headerbar.quick_add_requested.connect(self.open_quick_add_dialog)
         self.headerbar.world_clock_requested.connect(self.open_world_clock_popover)
         self.headerbar.support_requested.connect(lambda: self._show_support_dialog(is_automatic=False))
+        self.headerbar.feedback_requested.connect(lambda: self.navigation_controller.set_active_section("feedback"))
+        self.headerbar.user_manual_requested.connect(lambda: self.navigation_controller.set_active_section("user_manual"))
+        self.headerbar.onboarding_tour_requested.connect(self.start_onboarding_tour)
         self.headerbar.diagnostics_requested.connect(self._show_diagnostics)
         self.headerbar.about_requested.connect(self._show_about)
         self.theme_controller.theme_changed.connect(self.headerbar.update_theme_icon)
         self.headerbar.update_theme_icon(self.theme_controller.current_mode)
+        self.headerbar.set_supporter_badge(
+            bool(self.settings_manager.get("is_todo_bird_supporter", False))
+        )
         self.headerbar.language_selected.connect(self._on_language_selected)
         self.language_service.language_changed.connect(
             lambda _code: self._apply_language_to_chrome()
@@ -335,6 +359,13 @@ class MainWindow(QMainWindow):
         self._reminder_poll_timer.setInterval(2000)
         self._reminder_poll_timer.timeout.connect(self._check_periodic_reminders)
         self._reminder_poll_timer.start()
+
+        # Connect task completion milestone check
+        try:
+            from todo_bird_app.controllers.task_controller import _GLOBAL_EVENT_BUS
+            _GLOBAL_EVENT_BUS.tasks_changed.connect(self._check_milestone_pulse)
+        except Exception:
+            pass
 
     def _init_menu_bar(self):
         """
@@ -439,13 +470,30 @@ class MainWindow(QMainWindow):
         # Help Menu
         help_menu = menubar.addMenu("&Help")
 
+        act_manual = QAction("&User Manual & Guide", self)
+        act_manual.setShortcut(QKeySequence("F1"))
+        act_manual.triggered.connect(lambda: self.navigation_controller.set_active_section("user_manual"))
+        help_menu.addAction(act_manual)
+
+        act_tour = QAction("&Interactive Teaching Tour...", self)
+        act_tour.triggered.connect(self.start_onboarding_tour)
+        help_menu.addAction(act_tour)
+
+        help_menu.addSeparator()
+
+        act_feedback = QAction("Share &Feedback & Rating...", self)
+        act_feedback.triggered.connect(lambda: self.navigation_controller.set_active_section("feedback"))
+        help_menu.addAction(act_feedback)
+
+        act_support = QAction("&Support Todo Bird (Razorpay)...", self)
+        act_support.triggered.connect(lambda: self._show_support_dialog(is_automatic=False))
+        help_menu.addAction(act_support)
+
+        help_menu.addSeparator()
+
         act_about = QAction("&About TODO BIRD", self)
         act_about.triggered.connect(self._show_about)
         help_menu.addAction(act_about)
-
-        act_support = QAction("&Support & Feedback...", self)
-        act_support.triggered.connect(lambda: self._show_support_dialog(is_automatic=False))
-        help_menu.addAction(act_support)
 
         act_diag = QAction("System &Diagnostics...", self)
         act_diag.triggered.connect(self._show_diagnostics)
@@ -637,6 +685,7 @@ class MainWindow(QMainWindow):
             ("daily_review", DailyReviewView(self.db_manager, self.settings_manager)),
             ("feedback", PilotFeedbackView(self.db_manager, self.settings_manager)),
             ("world_clock", WorldClockView(self.db_manager, self.settings_manager)),
+            ("user_manual", UserManualView(self.db_manager, self.settings_manager)),
             ("settings", SettingsView(self.db_manager, self.settings_manager)),
         ]
 
@@ -646,6 +695,11 @@ class MainWindow(QMainWindow):
             setattr(self, f"{key}_view", view_widget)
             if hasattr(view_widget, "on_theme_changed"):
                 self.theme_controller.theme_changed.connect(view_widget.on_theme_changed)
+
+        if hasattr(self, "user_manual_view"):
+            self.user_manual_view.start_tour_requested.connect(self.start_onboarding_tour)
+            self.user_manual_view.navigate_section_requested.connect(self.navigation_controller_safe_navigate)
+            self.user_manual_view.support_requested.connect(lambda: self._show_support_dialog(is_automatic=False))
 
         self._on_appearance_changed(
             AppearanceService.read(
@@ -838,6 +892,10 @@ class MainWindow(QMainWindow):
                 self.export_csv_report()
             elif code == "open_world_clock":
                 self.open_world_clock_popover()
+            elif code == "start_tour":
+                self.start_onboarding_tour()
+            elif code == "open_support":
+                self._show_support_dialog(is_automatic=False)
 
     def _on_language_selected(self, code: str):
         """Header-bar language menu: switch, persist, retranslate chrome."""
@@ -978,6 +1036,90 @@ class MainWindow(QMainWindow):
         if hasattr(self, "bg_overlay") and self.bg_overlay is not None and self.centralWidget():
             self.bg_overlay.setGeometry(self.centralWidget().rect())
             self.bg_overlay.lower()
+        if getattr(self, "onboarding_overlay", None) is not None and self.centralWidget():
+            self.onboarding_overlay.setGeometry(self.centralWidget().rect())
+            if self.onboarding_overlay.isVisible():
+                self.onboarding_overlay.raise_()
+        if getattr(self, "milestone_pulse_banner", None) is not None and self.centralWidget():
+            self._position_milestone_banner()
+
+    def _position_milestone_banner(self):
+        if self.milestone_pulse_banner is None or not self.centralWidget():
+            return
+        cw = self.centralWidget()
+        bw = self.milestone_pulse_banner.width()
+        bh = self.milestone_pulse_banner.height()
+        x = max(16, cw.width() - bw - 24)
+        y = max(60, cw.height() - bh - 24)
+        self.milestone_pulse_banner.move(x, y)
+        if self.milestone_pulse_banner.isVisible():
+            self.milestone_pulse_banner.raise_()
+
+    def _check_milestone_pulse(self):
+        """Triggers the celebratory milestone micro-pulse banner when 3+ tasks are completed."""
+        try:
+            if bool(self.settings_manager.get("milestone_pulse_completed", False)):
+                return
+            if getattr(self, "onboarding_overlay", None) is not None and self.onboarding_overlay.isVisible():
+                return
+            tasks = self.db_manager.get_all_tasks()
+            completed_count = sum(1 for t in tasks if str(t.get("status", "")).lower() == "completed")
+            if completed_count >= 3:
+                self.show_milestone_pulse_banner()
+        except Exception as e:
+            logger.debug(f"Milestone pulse check skipped: {e}")
+
+    def show_milestone_pulse_banner(self):
+        parent_w = self.centralWidget() or self
+        if self.milestone_pulse_banner is None:
+            self.milestone_pulse_banner = MilestonePulseBanner(
+                settings_manager=self.settings_manager,
+                parent=parent_w,
+            )
+            self.milestone_pulse_banner.open_feedback_requested.connect(
+                lambda: self.navigation_controller_safe_navigate("feedback")
+            )
+        self._position_milestone_banner()
+        self.milestone_pulse_banner.show()
+        self.milestone_pulse_banner.raise_()
+
+    def navigation_controller_safe_navigate(self, section: str):
+        if hasattr(self, "navigation_controller") and self.navigation_controller:
+            self.navigation_controller.set_active_section(section)
+
+    def _evaluate_first_time_onboarding(self):
+        """Launches the interactive teaching tour automatically on first app open."""
+        try:
+            if not bool(self.settings_manager.get("onboarding_completed", False)):
+                self.start_onboarding_tour(first_step_only=True)
+        except Exception as e:
+            logger.debug(f"First-time onboarding evaluation skipped: {e}")
+
+    def start_onboarding_tour(self, first_step_only: bool = False):
+        """Creates or re-opens the in-window interactive teaching tour overlay."""
+        parent_w = self.centralWidget() or self
+        if self.onboarding_overlay is None:
+            self.onboarding_overlay = OnboardingTeachingOverlay(
+                main_window=self,
+                settings_manager=self.settings_manager,
+                parent=parent_w,
+            )
+            self.onboarding_overlay.open_manual_requested.connect(
+                lambda: self.navigation_controller_safe_navigate("user_manual")
+            )
+            self.onboarding_overlay.open_feedback_requested.connect(
+                lambda: self.navigation_controller_safe_navigate("feedback")
+            )
+            self.onboarding_overlay.open_support_requested.connect(
+                lambda: self._show_support_dialog(is_automatic=False)
+            )
+        else:
+            self.onboarding_overlay._load_step(0, navigate_live=not first_step_only)
+
+        self.onboarding_overlay.setGeometry(parent_w.rect())
+        self.onboarding_overlay.show()
+        self.onboarding_overlay.raise_()
+        self.onboarding_overlay.setFocus()
 
     def _evaluate_startup_greeting(self):
         try:
@@ -994,6 +1136,12 @@ class MainWindow(QMainWindow):
             support_service=self.support_service,
             parent=self,
             is_automatic_prompt=is_automatic
+        )
+        dialog.feedback_requested.connect(
+            lambda: self.navigation_controller_safe_navigate("feedback")
+        )
+        dialog.supporter_status_changed.connect(
+            self.headerbar.set_supporter_badge
         )
         dialog.exec()
 
@@ -1041,6 +1189,12 @@ class MainWindow(QMainWindow):
 
             try:
                 QToolTip.hideText()
+            except Exception:
+                pass
+
+            try:
+                from todo_bird_app.controllers.task_controller import _GLOBAL_EVENT_BUS
+                _GLOBAL_EVENT_BUS.tasks_changed.disconnect(self._check_milestone_pulse)
             except Exception:
                 pass
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "todo-bird"
-version = "1.0.1"
+version = "1.0.2"
 description = "Offline Desktop Personal Assistant & Task Manager"
 readme = "todo_bird_app/README.md"
 requires-python = ">=3.10"
