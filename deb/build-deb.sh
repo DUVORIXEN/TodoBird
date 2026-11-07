@@ -6,7 +6,7 @@ echo "=== Building Todo Bird Standalone Debian Package (.deb) ==="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 STAGING="${SCRIPT_DIR}/staging"
-DEB_NAME="todo-bird_1.0.1_amd64.deb"
+DEB_NAME="todo-bird_1.0.2_amd64.deb"
 
 # Clean previous build
 rm -rf "${STAGING}" "${SCRIPT_DIR}/${DEB_NAME}" "${REPO_ROOT}/${DEB_NAME}"
@@ -20,7 +20,7 @@ mkdir -p "${STAGING}/opt/todo-bird"
 # 1. DEBIAN/control
 cat << 'EOF' > "${STAGING}/DEBIAN/control"
 Package: todo-bird
-Version: 1.0.1
+Version: 1.0.2
 Architecture: amd64
 Maintainer: Duvorixen <duvorixen@gmail.com>
 Section: utils

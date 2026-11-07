@@ -44,6 +44,8 @@ parts:
   todo-bird:
     plugin: python
     source: .
+    build-environment:
+      - PYTHONPATH: "/root/parts/todo-bird/install/lib/python3.12/site-packages:${PYTHONPATH:-}"
     python-requirements:
       - todo_bird_app/requirements.txt
     stage-packages:
